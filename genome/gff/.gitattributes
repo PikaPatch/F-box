@@ -1,0 +1,16 @@
+JU1422.gff filter=lfs diff=lfs merge=lfs -text
+ED3036.gff filter=lfs diff=lfs merge=lfs -text
+EG5268.gff filter=lfs diff=lfs merge=lfs -text
+HK104.gff filter=lfs diff=lfs merge=lfs -text
+JU349.gff filter=lfs diff=lfs merge=lfs -text
+JU4356.gff filter=lfs diff=lfs merge=lfs -text
+QR24.gff filter=lfs diff=lfs merge=lfs -text
+QX1410.gff filter=lfs diff=lfs merge=lfs -text
+VSL2202.gff filter=lfs diff=lfs merge=lfs -text
+YR106.gff filter=lfs diff=lfs merge=lfs -text
+ZF1220.gff filter=lfs diff=lfs merge=lfs -text
+AF16.gff filter=lfs diff=lfs merge=lfs -text
+JU1421.gff filter=lfs diff=lfs merge=lfs -text
+JU2484.gff filter=lfs diff=lfs merge=lfs -text
+JU2617.gff filter=lfs diff=lfs merge=lfs -text
+VX34.gff filter=lfs diff=lfs merge=lfs -text
