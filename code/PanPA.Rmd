@@ -1,0 +1,328 @@
+---
+title: "PanPA"
+output: html_notebook
+---
+
+
+```{r}
+library(ggVennDiagram)
+library(ggnewscale)
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(stringr)
+library(ggthemes)
+```
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup')) %>%
+  tibble() -> gene.bed
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Orthogroups.GeneCount.tsv',header = T) %>% 
+  tibble() -> GeneCount
+```
+
+
+# Fig 3 B
+```{r}
+GeneCount %>%
+  dplyr::select(-Total) %>%
+  filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  mutate(across(where(is.numeric), ~ if_else(.x > 0, 1, 0))) -> GeneCount.OPA
+
+GeneCount.OPA %>%
+  mutate(CN.Core = if_else( rowSums(across(all_of(CN))) == length(CN) , T, F)  ) %>%
+  mutate(CB.Core = if_else( rowSums(across(all_of(CB))) == length(CB) , T, F)  ) %>%
+  mutate(CN.Ex = if_else( rowSums(across(all_of(CB))) == 0 , T, F)  ) %>%
+  mutate(CB.Ex = if_else( rowSums(across(all_of(CN))) == 0 , T, F)  ) %>%
+  mutate(Private = if_else( rowSums(across(all_of(c(CN,CB)))) == 1 , T, F)  ) %>%
+  mutate(in.Out = if_else( rowSums(across(all_of(c('N2','BRE','CRE')))) > 1 , T, F)  ) -> GeneCount.OPA.C
+
+GeneCount.OPA.C %>%
+  mutate(Order = case_when(
+    CN.Core & CB.Core & in.Out ~ "Core.Out",
+    CN.Core & CB.Core ~ "Core",
+    CN.Core & !CN.Ex & in.Out ~ "CNS.Core.Out",
+    CN.Core & !CN.Ex ~ "CNS.Core",
+    CB.Core & !CB.Ex & in.Out ~ "CBS.Core.Out",
+    CB.Core & !CB.Ex ~ "CBS.Core",
+    CN.Ex & in.Out ~ "CN.Ex.Out",
+    CN.Ex ~ "CN.Ex",
+    CB.Ex & in.Out ~ "CB.Ex.Out",
+    CB.Ex ~ "CB.Ex",
+    in.Out ~ "Out",
+    .default = "Cloud"
+  )) %>%
+  mutate(Order = Order %>% factor(levels = c('Core.Out','Core','CNS.Core.Out','CNS.Core','CBS.Core.Out','CBS.Core','Out','Cloud','CN.Ex.Out','CN.Ex','CB.Ex.Out','CB.Ex'))) %>%
+  arrange(Order) %>% pull(Orthogroup) -> Orthogroup.Order
+
+GeneCount.OPA.C %>%
+  filter(rowSums(across(all_of(c(CB,CN))) > 0) > 0 ) %>%
+  #filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  mutate(IO = if_else(in.Out,1,0)) %>%
+  #dplyr::select(Orthogroup,where(is.numeric)) %>%
+  dplyr::select(Orthogroup,all_of(c(CN,CB))) %>%
+  melt(id.vars = c('Orthogroup'),variable.name = 'STR',value.name = 'PA')  %>%
+  mutate(Orthogroup = Orthogroup %>% factor(levels = Orthogroup.Order)) %>%
+  mutate(PA = PA %>% factor(levels = c(1,0))) %>%
+  mutate(PA = if_else(PA == 1,'Present','Absent')) %>%
+  mutate(STR = STR %>% factor(levels = c(CB %>% rev,CN %>% rev))) %>%
+  ggplot() +
+  geom_raster(aes(Orthogroup %>% factor,STR,fill=PA)) +
+  #scale_fill_manual(values = c('#3e505b','#8ab0ab')) +
+  scale_fill_manual(values = c('#f1f2f2','#748cab')) +
+  guides(fill=guide_legend(title="")) +
+  new_scale_fill() +
+  geom_raster(data = GeneCount.OPA.C %>%
+                filter(rowSums(across(all_of(c(CB,CN))) > 0) > 0 ) %>%
+                mutate(IO = if_else(in.Out == 1,'In out group','Not in out group')) %>%
+                dplyr::select(Orthogroup,IO) %>%
+                melt(id.vars = c('Orthogroup'),variable.name = 'STR',value.name = 'PA') %>% mutate(STR = 'Out groups'),
+                aes(Orthogroup %>% factor,STR,fill=PA)) +
+  scale_fill_manual(values = c('#30323d','#ffd166') %>% rev) +
+  theme(axis.text.x=element_blank(),
+        axis.line.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  xlab('') +
+  ylab('') +
+  guides(fill=guide_legend(title=""))
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/PA.pdf',width = 20,height = 4)
+```
+
+# supplementary table
+```{r}
+GeneCount.OPA.C %>%
+   mutate(Order = case_when(
+    CN.Core & CB.Core & in.Out ~ "Core.Out",
+    CN.Core & CB.Core ~ "Core",
+    CN.Core & !CN.Ex & in.Out ~ "CNS.Core.Out",
+    CN.Core & !CN.Ex ~ "CNS.Core",
+    CB.Core & !CB.Ex & in.Out ~ "CBS.Core.Out",
+    CB.Core & !CB.Ex ~ "CBS.Core",
+    CN.Ex & in.Out ~ "CN.Ex.Out",
+    CN.Ex ~ "CN.Ex",
+    CB.Ex & in.Out ~ "CB.Ex.Out",
+    CB.Ex ~ "CB.Ex",
+    in.Out ~ "Out",
+    .default = "Cloud"
+  )) %>%
+   mutate(Order2 = case_when(
+    CN.Core & CB.Core ~ "Shared Core",
+    CN.Core & !CN.Ex ~ "Cni-unique core",
+    CB.Core & !CB.Ex ~ "Cbr-unique core",
+    CN.Ex ~ "Cni-specific",
+    CB.Ex ~ "Cbr-specific",
+    .default = "Dispensable"
+  )) %>%
+  dplyr::select(Orthogroup,in.Out,Order2)-> GeneCount.OPA.C.t1
+
+GeneCount %>%
+  left_join(GeneCount.OPA.C.t1, by = join_by(Orthogroup == Orthogroup)) %>%
+  dplyr::select(all_of(c('Orthogroup',CB,CN,'in.Out','Order2'))) %>%
+  rename("present in out groups" = 'in.Out',
+         "Type" = 'Order2') -> GeneCount.t
+
+GeneCount.t %>%
+  write.csv(file = '/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/Tables/Orthogroups.csv',
+            quote = F,row.names = F)
+  
+```
+
+
+# PA.data
+```{r}
+GeneCount %>%
+  dplyr::select(-c('N2','BRE','CRE'),-Total) %>%
+  filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  mutate(across(where(is.numeric), ~ if_else(.x > 0, 1, 0))) -> GeneCount.PA
+
+GeneCount.PA %>%
+  #mutate(Total = rowSums(across(where(is.numeric))) ) %>%
+  mutate(CN.Core = if_else( rowSums(across(all_of(CN))) == length(CN) , T, F)  ) %>%
+  mutate(CB.Core = if_else( rowSums(across(all_of(CB))) == length(CB) , T, F)  ) %>%
+  mutate(CN.Ex = if_else( rowSums(across(all_of(CB))) == 0 , T, F)  ) %>%
+  mutate(CB.Ex = if_else( rowSums(across(all_of(CN))) == 0 , T, F)  ) -> GeneCount.PA.C
+
+GeneCount.PA.C %>%
+  mutate(Order = case_when(
+    CN.Core & CB.Core ~ "Core",
+    CN.Core & !CN.Ex ~ "CNS.Core",
+    CB.Core & !CB.Ex ~ "CBS.Core",
+    CN.Ex ~ "CN.Ex",
+    CB.Ex ~ "CB.Ex",
+    .default = "Cloud"
+  )) %>%
+  mutate(Order = Order %>% factor(levels = c('Core','CNS.Core','CBS.Core','CN.Ex','CB.Ex','Cloud'))) %>%
+  arrange(Order) -> PA.data
+
+```
+
+
+# Fig 3 C
+```{r}
+c <- c("#ff595e", "#6a4c93", "#ffca3a","#8ac926","#1982c4", "lightgrey")
+Core.f.name <- c(
+  "Core" = "Core",
+  'CNS.Core' = 'Cni specific core',
+  'CBS.Core' = 'Cbr specific core',
+  'CN.Ex' = 'Cni specific',
+  'CB.Ex' = 'Cbr specific',
+  'Cloud' = 'Dispensable'
+)
+PA.data %>% 
+  group_by(Order) %>% 
+  reframe(n=n()) %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot(aes(x="",n,fill = Order)) +
+  geom_col()+
+  coord_polar(theta = "y") +
+  geom_text(aes(label = paste0(round(n/sum(n)*100), "%")),color='white',
+            position = position_stack(vjust = 0.5),size=5) +
+  scale_fill_manual(values = c) +
+  theme_void() +
+  theme(legend.position = 'none')
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/Core.Pie.pdf',width = 3,height = 3)
+```
+
+# Fig 3 C
+```{r}
+c <- c("#ff595e", "#6a4c93", "#ffca3a","#8ac926","#1982c4", "lightgrey")
+PA.data %>%
+  mutate(Total = rowSums(across(where(is.numeric))) ) %>%
+  group_by(Total,Order) %>%
+  reframe(n=n()) %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot(aes(Total,n,fill=Order)) +
+  geom_col() +
+  scale_fill_manual(values = c) + 
+  xlab('Genome number') +
+  ylab('Family number') +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    )
+
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/Core.bar.pdf',width = 9,height = 5)
+```
+
+# Fig 3 D
+```{r}
+c <- c("#ff595e", "#6a4c93", "#ffca3a","#8ac926","#1982c4", "lightgrey")
+GeneCount %>%
+  dplyr::select(-c('N2','BRE','CRE'),-Total) %>%
+  filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  left_join(PA.data %>% dplyr::select(Orthogroup,Order),by = join_by(Orthogroup == Orthogroup)) %>%
+  melt(id.vars = c('Orthogroup','Order') ,variable.name = 'STR',value.name = 'Count') %>%
+  group_by(STR,Order) %>%
+  reframe(Count = sum(Count)) %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) %>% rev )) %>%
+  mutate(STR = STR %>% factor(levels = c(CB %>% rev , CN %>% rev) )) %>% 
+  #filter(Order %in% c('Cni specific','Cbr specific'))
+  ggplot(aes(Count,STR,fill=Order)) +
+  geom_col() +
+  scale_fill_manual(values = c %>% rev) +
+  xlab('Gene numbers') +
+  ylab('Strains') +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1)
+    )
+```
+
+
+
+# Private.Orthogroup
+
+```{r}
+PA.data %>%
+  filter(CN.Ex | CB.Ex) %>%
+  filter(rowSums(across( all_of(c(CB,CN)) )) == 1) %>%
+  pull(Orthogroup) -> Private.Orthogroup
+
+
+GeneCount %>%
+  filter(Orthogroup %in% Private.Orthogroup) %>%
+  dplyr::select(Orthogroup,CN,CB) %>%
+  melt(id.vars = 'Orthogroup',variable.name = 'STR',value.name = 'GeneC') %>%
+  filter(GeneC > 0) %>%
+  group_by(STR) %>%
+  reframe(GeneC=sum(GeneC)) %>%
+  left_join(strain.table %>% dplyr::select(STR,SPE,Gene) , by = join_by(STR == STR)) %>%
+  mutate(Ratio = GeneC / Gene) %>%
+  write.csv('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/5.private gene families/private.csv',row.names = F)
+
+
+GeneCount %>%
+  filter(Orthogroup %in% Private.Orthogroup) %>%
+  dplyr::select(Orthogroup,CN,CB) %>%
+  melt(id.vars = 'Orthogroup',variable.name = 'STR',value.name = 'GeneC') %>%
+  filter(GeneC > 0) %>%
+  group_by(STR) %>%
+  reframe(GeneC=sum(GeneC)) %>%
+  mutate(STR = STR %>% factor(levels = STR.order)) %>%
+  ggplot(aes(GeneC,STR)) +
+  geom_col() +
+  ggtitle('Private Gene Count') +
+  xlab('Gene Number') + ylab('Strain')
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/5.private gene families/private.pdf',width = 5,height = 5)
+```
+
+
+
+# calculate each group families num
+```{r}
+GeneCount.OPA.C %>%
+  dplyr::select(-c('N2','BRE','CRE')) %>%
+  filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  mutate(Order = case_when(
+    CN.Core & CB.Core & in.Out ~ "Core.Out",
+    CN.Core & CB.Core ~ "Core",
+    CN.Core & !CN.Ex & in.Out ~ "CNS.Core.Out",
+    CN.Core & !CN.Ex ~ "CNS.Core",
+    CB.Core & !CB.Ex & in.Out ~ "CBS.Core.Out",
+    CB.Core & !CB.Ex ~ "CBS.Core",
+    CN.Ex & in.Out ~ "CN.Ex.Out",
+    CN.Ex ~ "CN.Ex",
+    CB.Ex & in.Out ~ "CB.Ex.Out",
+    CB.Ex ~ "CB.Ex",
+    in.Out ~ "Out",
+    .default = "Cloud"
+  )) %>%
+  mutate(Order = Order %>% factor(levels = c('Core.Out','Core','CNS.Core.Out','CNS.Core','CBS.Core.Out','CBS.Core','Out','Cloud','CN.Ex.Out','CN.Ex','CB.Ex.Out','CB.Ex'))) %>%
+  dplyr::select(Orthogroup,Order) %>% pull(Order) %>% table
+```
+
+
+
+
+

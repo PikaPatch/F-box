@@ -1,0 +1,743 @@
+---
+title: "DomainPfam3"
+output: html_notebook
+---
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup')) %>%
+  tibble() -> gene.bed
+```
+
+# plus plus
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup','NOTAL.cov')) %>%
+  tibble() -> gene.plus.plus.bed
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Pfam.txt',col.names = c('Gene','Pfam','Pfam.Desc','Start','End','IPR','STR'),sep = '\t',quote = "") %>%
+  tibble() -> Pfam.txt
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/DomainPfam/PfamDesc.txt',col.names = c('Pfam','Desc'),sep = '\t',quote = "") %>%
+  tibble() -> Pfam.desc
+```
+
+
+
+
+
+#Ex
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Orthogroups.GeneCount.tsv',header = T) %>% 
+  tibble() -> GeneCount
+```
+
+
+```{r}
+GeneCount %>%
+  dplyr::select(-Total) %>%
+  filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  mutate(across(where(is.numeric), ~ if_else(.x > 0, 1, 0))) -> GeneCount.OPA
+
+GeneCount.OPA %>%
+  mutate(CN.Core = if_else( rowSums(across(all_of(CN))) == length(CN) , T, F)  ) %>%
+  mutate(CB.Core = if_else( rowSums(across(all_of(CB))) == length(CB) , T, F)  ) %>%
+  mutate(CN.Ex = if_else( rowSums(across(all_of(CB))) == 0 , T, F)  ) %>%
+  mutate(CB.Ex = if_else( rowSums(across(all_of(CN))) == 0 , T, F)  ) %>%
+  mutate(Private = if_else( rowSums(across(all_of(c(CN,CB)))) == 1 , T, F)  ) %>%
+  mutate(in.Out = if_else( rowSums(across(all_of(c('N2','BRE','CRE')))) > 1 , T, F)  ) -> GeneCount.OPA.C
+
+GeneCount %>%
+  left_join(
+    GeneCount.OPA.C %>% 
+        mutate(Order = case_when(
+          CN.Core & CB.Core & in.Out ~ "Core.Out",
+          CN.Core & CB.Core ~ "Core",
+          CN.Core & !CN.Ex & in.Out ~ "CNS.Core.Out",
+          CN.Core & !CN.Ex ~ "CNS.Core",
+          CB.Core & !CB.Ex & in.Out ~ "CBS.Core.Out",
+          CB.Core & !CB.Ex ~ "CBS.Core",
+          CN.Ex & in.Out ~ "CN.Ex.Out",
+          CN.Ex ~ "CN.Ex",
+          CB.Ex & in.Out ~ "CB.Ex.Out",
+          CB.Ex ~ "CB.Ex",
+          in.Out ~ "Out",
+          .default = "Cloud"
+          )) %>%
+      dplyr::select(Orthogroup,CN.Core,CB.Core,CN.Ex,CB.Ex,in.Out,Order), by = join_by(Orthogroup == Orthogroup )
+  ) -> GeneCount.O.C
+```
+
+
+```{r}
+GeneCount.O.C %>%
+  filter(Order == 'CN.Ex') %>%
+  pull(Orthogroup) -> CN.Ex.Orthogroup
+
+GeneCount.O.C %>%
+  filter(Order == 'CB.Ex') %>%
+  pull(Orthogroup) -> CB.Ex.Orthogroup
+```
+
+
+```{r}
+gene.bed %>%
+  filter(Orthogroup %in% CB.Ex.Orthogroup) %>%
+  pull(Gene) -> CB.Ex.Orthogroup.gene
+
+gene.bed %>%
+  filter(Orthogroup %in% CN.Ex.Orthogroup) %>%
+  pull(Gene) -> CN.Ex.Orthogroup.gene
+  
+Pfam.txt %>%
+  filter(Gene %in% CN.Ex.Orthogroup.gene) %>%
+  group_by(Pfam) %>%
+  reframe(CNI = n()) %>%
+  left_join( Pfam.txt %>%
+  filter(Gene %in% CB.Ex.Orthogroup.gene) %>%
+  group_by(Pfam) %>%
+  reframe(CBR = n()) , by = join_by(Pfam == Pfam) ) %>%
+  replace(is.na(.), 0) %>%
+  rowwise() %>%
+  mutate(
+      fisher.pval = fisher.test(matrix(c(
+        CBR, length(CB.Ex.Orthogroup.gene) - CBR,CNI,length(CN.Ex.Orthogroup.gene) - CNI
+    ), nrow = 2, byrow = TRUE))$p.value , 
+      odds_r = fisher.test(matrix(c(
+        CBR, length(CB.Ex.Orthogroup.gene) - CBR,CNI,length(CN.Ex.Orthogroup.gene) - CNI
+    ), nrow = 2, byrow = TRUE))$estimate
+  ) %>%
+  ungroup() %>%
+  mutate(R = (CBR + CNI)/ ( length(CB.Ex.Orthogroup.gene) + length(CN.Ex.Orthogroup.gene) )) %>%
+  left_join(Pfam.desc, by = join_by(Pfam==Pfam)) -> Ex.Orthogroup.gene.fisher
+
+
+```
+
+# Fig 4 A
+```{r}
+Ex.Orthogroup.gene.fisher %>% 
+  filter(fisher.pval < 0.05) %>%
+  arrange(fisher.pval) %>%
+  slice_head(n=15) -> p.data
+
+
+
+p.data %>% 
+  mutate(Pfam = Pfam %>% factor(levels = p.data$Pfam %>% rev )) %>%
+  ggplot(aes(x = R,y=Pfam,fill= -log10(fisher.pval),size = CNI + CBR)) +
+  geom_point(stroke=1,shape=21,color='black') +
+  #scale_fill_viridis_c(option = 'plasma') +
+  #scale_fill_gradient(low = "#0D92F4", high = "#C62E2E", na.value = NA) +
+  scale_fill_gradient2(low = "#0D92F4", high = "#C62E2E",mid = "white", na.value = NA,midpoint = 75) +
+  scale_y_discrete( labels = p.data$Desc %>% rev) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+  ) +
+  xlab('Gene Ratio') + ylab('')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure4/Ex.fisher.pdf',width = 6.9,height = 2.8)
+```
+
+
+
+
+
+# JU1421 div fisher
+```{r}
+gene.plus.plus.bed %>%
+  filter(STR == 'JU1421') %>%
+  mutate(DivG = if_else(NOTAL.cov < 1, F, T)) %>%
+  dplyr::select(Gene,DivG) %>%
+  group_by(DivG) %>%
+  reframe(GeneC = n())
+  
+DivGeneC <- 9807
+SynGeneC <- 18823
+```
+
+
+
+
+```{r}
+Pfam.txt %>%
+  filter(STR == 'JU1421') %>%
+  left_join( 
+    gene.plus.plus.bed %>% 
+      mutate(DivG = if_else(NOTAL.cov < 1, 'SYN','DIV')) %>% 
+      dplyr::select(Gene,DivG) , 
+    by = join_by(Gene == Gene)
+    ) %>%
+  group_by(Pfam,DivG) %>%
+  reframe(Count = n()) %>%
+  dcast(Pfam ~ DivG, value.var = 'Count') %>%
+  replace(is.na(.), 0) %>%
+  rowwise() %>%
+  mutate(
+      fisher.pval = fisher.test(matrix(c(
+        DIV, DivGeneC - DIV,SYN,SynGeneC - SYN
+    ), nrow = 2, byrow = TRUE))$p.value , 
+      odds_r = fisher.test(matrix(c(
+        DIV, DivGeneC - DIV,SYN,SynGeneC - SYN
+    ), nrow = 2, byrow = TRUE))$estimate
+  ) %>%
+  ungroup() %>%
+  mutate(R = (DIV + SYN)/ ( SynGeneC +DivGeneC )) %>%
+  left_join(Pfam.desc, by = join_by(Pfam==Pfam)) -> JU1421.DIV.fisher
+```
+
+
+# Fig 4 B
+```{r}
+JU1421.DIV.fisher %>% 
+  filter(fisher.pval < 0.05) %>%
+  arrange(fisher.pval) %>%
+  slice_head(n=15) -> p.data
+
+p.data %>% 
+  mutate(Pfam = Pfam %>% factor(levels = p.data$Pfam %>% rev )) %>%
+  ggplot(aes(x = R,y=Pfam,fill= -log10(fisher.pval),size = DIV + SYN )) +
+  geom_point(stroke=1,shape=21,color='black') +
+  #scale_fill_viridis_c(option = 'plasma') +
+  #scale_fill_gradient(low = "#0D92F4", high = "#C62E2E", na.value = NA) +
+  scale_fill_gradient2(low = "#0D92F4", high = "#C62E2E",mid = "white", na.value = NA,midpoint = 75) +
+  scale_y_discrete( labels = p.data$Desc %>% rev) +
+  theme_classic() + 
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+  ) +
+  xlab('Gene Ratio') + ylab('Pfam domain') + 
+  ggtitle('JU1421 divergence region protein domain enrichment analysis')
+
+
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure4/JU1421.DIV.fisher.pdf',width = 7.3,height = 3.3)
+```
+
+
+
+
+# CN intra Div fisher
+
+```{r}
+gene.plus.plus.bed %>%
+  filter(STR %in% CN) %>%
+  filter(STR != 'JU1421') %>%
+  mutate(DivG = if_else(NOTAL.cov < 1, F, T)) %>%
+  dplyr::select(Gene,DivG) %>%
+  group_by(DivG) %>%
+  reframe(GeneC = n())
+  
+DivGeneC <- 16647
+SynGeneC <- 214971
+```
+
+
+```{r}
+Pfam.txt %>%
+  filter(STR %in% CN) %>%
+  filter(STR != 'JU1421') %>%
+  left_join( 
+    gene.plus.plus.bed %>% 
+      mutate(DivG = if_else(NOTAL.cov < 1, 'SYN','DIV')) %>% 
+      dplyr::select(Gene,DivG) , 
+    by = join_by(Gene == Gene)
+    ) %>%
+  group_by(Pfam,DivG) %>%
+  reframe(Count = n()) %>%
+  dcast(Pfam ~ DivG, value.var = 'Count') %>%
+  replace(is.na(.), 0) %>%
+  rowwise() %>%
+  mutate(
+      fisher.pval = fisher.test(matrix(c(
+        DIV, DivGeneC - DIV,SYN,SynGeneC - SYN
+    ), nrow = 2, byrow = TRUE))$p.value , 
+      odds_r = fisher.test(matrix(c(
+        DIV, DivGeneC - DIV,SYN,SynGeneC - SYN
+    ), nrow = 2, byrow = TRUE))$estimate
+  ) %>%
+  ungroup() %>%
+  mutate(R = (DIV + SYN)/ ( SynGeneC +DivGeneC )) %>%
+  left_join(Pfam.desc, by = join_by(Pfam==Pfam)) -> CN.Sub.DIV.fisher
+
+
+```
+
+
+# Fig 4 C
+```{r}
+CN.Sub.DIV.fisher %>% 
+  filter(fisher.pval < 0.05) %>%
+  arrange(fisher.pval) %>%
+  slice_head(n=15) -> p.data
+
+
+p.data %>% 
+  mutate(Pfam = Pfam %>% factor(levels = p.data$Pfam %>% rev )) %>%
+  ggplot(aes(x = R,y=Pfam,fill= -log10(fisher.pval),size = DIV + SYN )) +
+  geom_point(stroke=1,shape=21,color='black') +
+  #scale_fill_viridis_c(option = 'plasma') +
+  #scale_fill_gradient(low = "#0D92F4", high = "#C62E2E", na.value = NA,name = 'P-value') +
+  scale_fill_gradient2(low = "#0D92F4", high = "#C62E2E",mid = "white", na.value = NA,midpoint = 125) +
+  scale_y_discrete( labels = p.data$Desc %>% rev) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+  ) +
+  xlab('Gene Ratio') + ylab('Pfam domain') + 
+  ggtitle('C.nigoni intraspecies divergence region protein domain enrichment analysis')
+
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure4/CN.Sub.DIV.fisher.pdf',width = 7,height = 3.3)
+```
+
+
+
+# Coverage
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/FBOX.circos/CN.FBOX.n100.bed',col.names = c('Chr','Start','End','GeneC','Bp','Len','Cov','STR')) %>%
+  tibble() -> CN.FBOX.n100.bed
+
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/FBOX.circos/CN.BTB.n100.bed',col.names = c('Chr','Start','End','GeneC','Bp','Len','Cov','STR')) %>%
+  tibble() -> CN.BTB.n100.bed
+
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/FBOX.circos/CN.MATH.n100.bed',col.names = c('Chr','Start','End','GeneC','Bp','Len','Cov','STR')) %>%
+  tibble() -> CN.MATH.n100.bed
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/FBOX.circos/CB.FBOX.n100.bed',col.names = c('Chr','Start','End','GeneC','Bp','Len','Cov','STR')) %>%
+  tibble() -> CB.FBOX.n100.bed
+
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/FBOX.circos/CB.BTB.n100.bed',col.names = c('Chr','Start','End','GeneC','Bp','Len','Cov','STR')) %>%
+  tibble() -> CB.BTB.n100.bed
+
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/FBOX.circos/CB.MATH.n100.bed',col.names = c('Chr','Start','End','GeneC','Bp','Len','Cov','STR')) %>%
+  tibble() -> CB.MATH.n100.bed
+```
+
+
+
+#Fig 4 F
+```{r}
+CN.FBOX.n100.bed %>%
+  mutate(GeneC.Cap = if_else(GeneC > 10, 10 , GeneC)) %>%
+  group_by(STR) %>%
+  mutate(STRid = cur_group_id()) %>%
+  ungroup() %>%
+  group_by(STR,Chr) %>%
+  mutate(id = row_number()) %>%
+  ungroup() %>%
+  mutate(STR = STR %>% factor(levels = CN %>% rev)) %>%
+  ggplot() +
+  geom_raster(aes(id / 100,STR,fill = GeneC.Cap)) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_distiller(palette = "Reds",direction = 1,breaks=c(2,4,6,8,10))+
+  #scale_fill_viridis_c(option = "viridis")+
+  #scale_fill_gradientn(colours = c) +
+  facet_grid(~ Chr) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.line.y = element_blank()
+    ) +
+  xlab('Relative position') + ylab('') +
+  ggtitle('F-BOX domain distribution')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure4/CN.FBOX.cov.pdf',width = 11,height = 2.5)
+```
+
+
+# Fig 4 G
+```{r}
+CN.BTB.n100.bed %>%
+  mutate(GeneC.Cap = if_else(GeneC > 10, 10 , GeneC)) %>%
+  group_by(STR) %>%
+  mutate(STRid = cur_group_id()) %>%
+  ungroup() %>%
+  group_by(STR,Chr) %>%
+  mutate(id = row_number()) %>%
+  ungroup() %>%
+  mutate(STR = STR %>% factor(levels = CN %>% rev)) %>%
+  ggplot() +
+  geom_raster(aes(id / 100,STR,fill = GeneC.Cap)) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_distiller(palette = "Reds",direction = 1,breaks=c(2,4,6,8,10))+
+  #scale_fill_viridis_c(option = "viridis")+
+  #scale_fill_gradientn(colours = c) +
+  facet_grid(~ Chr) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.line.y = element_blank()
+    ) +
+  xlab('Relative position') + ylab('') +
+  ggtitle('BTB domain distribution')
+```
+
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure4/CN.BTB.cov.pdf',width = 11,height = 2.5)
+```
+
+
+```{r}
+CN.MATH.n100.bed %>%
+  mutate(GeneC.Cap = if_else(GeneC > 10, 10 , GeneC)) %>%
+  group_by(STR) %>%
+  mutate(STRid = cur_group_id()) %>%
+  ungroup() %>%
+  group_by(STR,Chr) %>%
+  mutate(id = row_number()) %>%
+  ungroup() %>%
+  mutate(STR = STR %>% factor(levels = CN %>% rev)) %>%
+  ggplot() +
+  geom_raster(aes(id / 100,STR,fill = GeneC.Cap)) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_distiller(palette = "Reds",direction = 1,breaks=c(2,4,6,8,10))+
+  #scale_fill_viridis_c(option = "viridis")+
+  #scale_fill_gradientn(colours = c) +
+  facet_grid(~ Chr) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.line.y = element_blank()
+    ) +
+  xlab('Relative position') + ylab('') +
+  ggtitle('MATH domain distribution')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure4/CN.MATH.cov.pdf',width = 11,height = 2.5)
+```
+
+
+
+
+
+# supplementary figure
+
+```{r}
+CB.FBOX.n100.bed %>%
+  mutate(GeneC.Cap = if_else(GeneC > 10, 10 , GeneC)) %>%
+  group_by(STR) %>%
+  mutate(STRid = cur_group_id()) %>%
+  ungroup() %>%
+  group_by(STR,Chr) %>%
+  mutate(id = row_number()) %>%
+  ungroup() %>%
+  mutate(STR = STR %>% factor(levels = CB %>% rev)) %>%
+  ggplot() +
+  geom_raster(aes(id / 100,STR,fill = GeneC.Cap)) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_distiller(palette = "Reds",direction = 1,breaks=c(2,4,6,8,10),limits = c(0,10))+
+  #scale_fill_viridis_c(option = "viridis")+
+  #scale_fill_gradientn(colours = c) +
+  facet_grid(~ Chr) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.line.y = element_blank()
+    ) +
+  xlab('Relative position') + ylab('') +
+  ggtitle('F-BOX domain distribution')
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/13.AF16.FBOX.cov/AF16.FBOX.cov.pdf',width = 11,height = 2.5)
+```
+
+
+
+
+```{r}
+CB.BTB.n100.bed %>%
+  mutate(GeneC.Cap = if_else(GeneC > 10, 10 , GeneC)) %>%
+  group_by(STR) %>%
+  mutate(STRid = cur_group_id()) %>%
+  ungroup() %>%
+  group_by(STR,Chr) %>%
+  mutate(id = row_number()) %>%
+  ungroup() %>%
+  mutate(STR = STR %>% factor(levels = CB %>% rev)) %>%
+  ggplot() +
+  geom_raster(aes(id / 100,STR,fill = GeneC.Cap)) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_distiller(palette = "Reds",direction = 1,breaks=c(2,4,6,8,10),limits = c(0,10))+
+  #scale_fill_viridis_c(option = "viridis")+
+  #scale_fill_gradientn(colours = c) +
+  facet_grid(~ Chr) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.line.y = element_blank()
+    ) +
+  xlab('Relative position') + ylab('') +
+  ggtitle('BTB domain distribution')
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/13.AF16.FBOX.cov/AF16.BTB.cov.pdf',width = 11,height = 2.5)
+```
+
+
+
+```{r}
+CB.MATH.n100.bed %>%
+  mutate(GeneC.Cap = if_else(GeneC > 10, 10 , GeneC)) %>%
+  group_by(STR) %>%
+  mutate(STRid = cur_group_id()) %>%
+  ungroup() %>%
+  group_by(STR,Chr) %>%
+  mutate(id = row_number()) %>%
+  ungroup() %>%
+  mutate(STR = STR %>% factor(levels = CB %>% rev)) %>%
+  ggplot() +
+  geom_raster(aes(id / 100,STR,fill = GeneC.Cap)) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_fill_distiller(palette = "Reds",direction = 1,breaks=c(2,4,6,8,10),limits = c(0,10))+
+  #scale_fill_viridis_c(option = "viridis")+
+  #scale_fill_gradientn(colours = c) +
+  facet_grid(~ Chr) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.line.y = element_blank()
+    ) +
+  xlab('Relative position') + ylab('') +
+  ggtitle('MATH domain distribution')
+```
+
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/13.AF16.FBOX.cov/AF16.MATH.cov.pdf',width = 11,height = 2.5)
+```
+
+
+
+
+
+
+
+
+
+# Fig 5 B
+```{r}
+
+Pfam.txt %>%
+  filter(Pfam == 'PF00646') %>%
+  pull(Gene) %>% unique() -> PF00646.Gene
+
+PF00646.5 <- c('PF00646' = 'FBOX-Unknow',
+                 'PF00646-PF01827' = 'FBOX-FTH',
+                 'PF00646-PF07735' = 'FBOX-FBA2',
+                 'PF17906-PF00646' = 'HTH-FBOX',
+                 'PF17906-PF00646-PF01827' = 'HTH-FBOX-FTH') %>% as.factor()
+
+PF00646.5.order <- c('FBOX-FBA2','FBOX-FTH','HTH-FBOX-FTH','FBOX-Unknow','HTH-FBOX','FBOX-Others')
+
+Pfam.txt %>%
+  filter(Gene %in% PF00646.Gene) %>%
+  arrange(Gene,Start) %>%
+  group_by(Gene,STR) %>%
+  reframe(Pfam = paste(Pfam, collapse = '-')) %>%
+  mutate(Type = if_else(Pfam %in% (PF00646.5 %>% names), PF00646.5[Pfam],'FBOX-Others')) %>%
+  group_by(STR,Type) %>%
+  reframe(GeneC = n()) %>%
+  replace(is.na(.), 0) %>%
+  mutate(Type = Type %>% factor(levels = PF00646.5.order %>% rev)) %>%
+  mutate(STR = STR %>% factor(levels = c(CN,CB ))) %>%
+  left_join(strain.table %>% dplyr::select(SPE,STR),by = join_by(STR==STR)) -> p.data
+
+p.data %>%
+  ggplot(aes(STR,Type)) +
+  geom_point(aes(size=GeneC,fill = SPE),color='black',shape = 21,stroke = 1) +
+  geom_text(aes(label = GeneC), color = "#272727" ,size = 3,nudge_x = 0,nudge_y = - 0.4) +
+  scale_fill_manual(values = c('#9AAED2','#F6B06D') ) +
+  scale_x_discrete(position = "top") +
+  scale_size(range = c(0, 10)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1),
+        panel.grid = element_line(color = "#009fb7",
+                                  linewidth = 0.25,
+                                  linetype = 'dotted'),
+        legend.position = 'none') +
+  xlab('') + ylab('') + guides(size=guide_legend(title="Gene number"))
+  
+
+```
+
+```{r}
+
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure5/FBOX.classification.pdf',width = 7,height = 4.5)
+```
+
+
+
+
+
+
+
+
+# Domain count fisher
+
+
+```{r}
+strain.table %>%
+  filter(SPE=='CNI') %>%
+  pull(Gene) %>%
+  mean -> CN.GeneM
+
+strain.table %>%
+  filter(SPE=='CBR') %>%
+  pull(Gene) %>%
+  mean -> CB.GeneM
+
+
+Pfam.txt %>%
+  group_by(STR,Pfam) %>%
+  reframe(count = n()) %>%
+  left_join(strain.table %>% dplyr::select(SPE,STR),by = join_by(STR==STR)) %>%
+  group_by(Pfam,SPE) %>%
+  reframe(mean = mean(count)) %>%
+  dcast(Pfam ~ SPE, value.var = 'mean') %>%
+  tibble() %>%
+  replace(is.na(.), 0) %>%
+  rowwise() %>%
+  mutate(
+      fisher.pval = fisher.test(matrix(c(
+        CBR, CB.GeneM - CBR,CNI,CN.GeneM - CNI
+    ), nrow = 2, byrow = TRUE))$p.value , 
+      odds_r = fisher.test(matrix(c(
+        CBR, CB.GeneM - CBR,CNI,CN.GeneM - CNI
+    ), nrow = 2, byrow = TRUE))$estimate
+  ) %>%
+  ungroup() %>%
+  mutate(R = (CBR + CNI)/ ( CB.GeneM + CN.GeneM )) %>%
+  left_join(Pfam.desc, by = join_by(Pfam==Pfam)) -> Pfam.fisher
+
+```
+
+
+# supplementary figure
+```{r}
+slice_headn <- 10
+Pfam.fisher %>% 
+  mutate(logp = -log10(fisher.pval)) %>%
+  filter(fisher.pval < 0.05) %>%
+  arrange(fisher.pval) %>%
+  slice_head(n=slice_headn) -> p.data
+
+p.data %>% 
+  mutate(Pfam = Pfam %>% factor(levels = p.data$Pfam %>% rev )) %>%
+  ggplot(aes(x = R,y=Pfam,fill=-log2(fisher.pval))) +
+  geom_col() +
+  scale_fill_viridis_c(option = 'viridis',name = 'log2(p-value)') +
+  scale_y_discrete( labels = p.data$Desc %>% rev) +
+  theme_classic() +
+  ylab('') +
+  theme_void() +
+  theme(
+    #axis.line.x = element_line(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1))
+
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/10.FBOX count/FB.fisher.pdf',width =3,height = 7 )
+```
+
+
+# supplementary figure
+```{r}
+
+Pfam.txt %>% 
+  dcast(Pfam ~ STR) -> Pfam.count
+
+Pfam.fisher %>% 
+  mutate(logp = -log10(fisher.pval)) %>%
+  filter(fisher.pval < 0.05) %>%
+  arrange(fisher.pval) %>%
+  slice_head(n=slice_headn) -> Pfam.30
+
+Pfam.count %>% 
+  filter(Pfam %in% Pfam.30$Pfam) %>%
+  rowwise() %>%
+  mutate(across(where(is.numeric), 
+                ~ (. - mean(c_across(where(is.numeric)), na.rm = TRUE)) / 
+                  sd(c_across(where(is.numeric)), na.rm = TRUE))) %>%
+  ungroup() %>%
+  melt(variable.name = 'STR', value.name = 'zscore',id='Pfam') -> Pfam.zscore
+
+Pfam.count %>% 
+  filter(Pfam %in% Pfam.30$Pfam) %>%
+  melt(variable.name = 'STR', value.name = 'count',id='Pfam') %>%
+  tibble() %>%
+  left_join(Pfam.zscore , by = c('Pfam'='Pfam','STR'='STR') ) %>%
+  left_join(Pfam.desc, by = join_by(Pfam==Pfam)) %>%
+  mutate(Pfam = Pfam %>% factor(levels = Pfam.30$Pfam %>% rev)) %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> p.data
+
+p.data %>%
+  ggplot(aes(STR,Pfam)) +
+  geom_raster(aes(fill = zscore)) +
+  geom_text(aes(label = count), color = "white",size=3) +
+  scale_y_discrete( labels = Pfam.30$Desc %>% rev) +
+  #scale_fill_gradientn(colours = c,limits = c(-2,2)) +
+  scale_fill_viridis_c(option = "rocket",name='Z-score')+
+  #scale_fill_gradient(low = "#233d4d", high = "#fe7f2d", na.value = NA) +
+  ylab('')+xlab('')+
+  theme_minimal()+
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1),
+    )
+
+
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/10.FBOX count/FB.zscore.pdf',width =8,height = 5 )
+```
+
+
+
+
+
+
+
+
+
+

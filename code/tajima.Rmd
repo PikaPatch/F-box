@@ -1,0 +1,273 @@
+---
+title: "tajima"
+output: html_notebook
+---
+
+```{r}
+library(magrittr)
+library(dplyr)
+library(reshape2)
+library(ape)
+library(pegas)
+library(ggplot2)
+```
+
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup')) %>%
+  tibble() -> gene.bed
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Orthogroups.GeneCount.tsv',header = T) %>% 
+  tibble() -> GeneCount
+```
+
+
+
+```{r}
+GeneCount %>%
+  dplyr::select(-c('N2','BRE','CRE'),-Total) %>%
+  filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  mutate(across(where(is.numeric), ~ if_else(.x > 0, 1, 0))) -> GeneCount.PA
+
+GeneCount.PA %>%
+  #mutate(Total = rowSums(across(where(is.numeric))) ) %>%
+  mutate(CN.Core = if_else( rowSums(across(all_of(CN))) == length(CN) , T, F)  ) %>%
+  mutate(CB.Core = if_else( rowSums(across(all_of(CB))) == length(CB) , T, F)  ) %>%
+  mutate(CN.Ex = if_else( rowSums(across(all_of(CB))) == 0 , T, F)  ) %>%
+  mutate(CB.Ex = if_else( rowSums(across(all_of(CN))) == 0 , T, F)  ) -> GeneCount.PA.C
+
+GeneCount.PA.C %>%
+  mutate(Order = case_when(
+    CN.Core & CB.Core ~ "Core",
+    CN.Core & !CN.Ex ~ "CNS.Core",
+    CB.Core & !CB.Ex ~ "CBS.Core",
+    CN.Ex ~ "CN.Ex",
+    CB.Ex ~ "CB.Ex",
+    .default = "Cloud"
+  )) %>%
+  mutate(Order = Order %>% factor(levels = c('Core','CNS.Core','CBS.Core','CN.Ex','CB.Ex','Cloud'))) %>%
+  arrange(Order) -> PA.data
+```
+
+
+```{r}
+Core.f.name <- c(
+  "Core" = "Shared Core",
+  'CNS.Core' = 'Cni-unique core',
+  'CBS.Core' = 'Cbr-unique core',
+  'CN.Ex' = 'Cni-specific',
+  'CB.Ex' = 'Cbr-specific',
+  'Cloud' = 'Dispensable'
+)
+```
+
+
+
+```{r}
+tajima <- function(OG,mafft.dir){
+  mafft.path <- paste0(mafft.dir,OG,'.mafft')
+  if(file.info(mafft.path)$size == 0 | is.na(file.info(mafft.path)$size)){
+    return(c(NA,NA,NA,NA))
+  }
+  
+  mafft <- read.dna(mafft.path, format = "fasta")
+  
+  taji <- tajima.test(mafft)
+  
+  r <- c(nuc.div(mafft),taji$D,taji$Pval.normal,taji$Pval.beta)
+  
+  return(r)
+}
+```
+
+
+```{r}
+tajima('OG0001354')
+```
+
+
+
+```{r}
+PA.data %>%
+  dplyr::select(Orthogroup,Order) -> tajima.table
+```
+
+# CNCB
+
+```{r}
+mafft.dir <- '/Users/patch/Documents/HBKU/Research/F-BOX/popu/mafft/'
+tajima.table %<>%
+  rowwise() %>%
+  mutate(CNCB.tajima = tajima(Orthogroup,mafft.dir)[2])
+
+tajima.table %<>%
+  rowwise() %>%
+  mutate(CNCB.nvc = tajima(Orthogroup,mafft.dir)[1]) %>%
+  ungroup()
+```
+
+# CN
+
+```{r}
+mafft.dir <- '/Users/patch/Documents/HBKU/Research/F-BOX/popu/CN_mafft/'
+tajima.table %<>%
+  rowwise() %>%
+  mutate(CN.tajima = tajima(Orthogroup,mafft.dir)[2])
+
+tajima.table %<>%
+  rowwise() %>%
+  mutate(CN.nvc = tajima(Orthogroup,mafft.dir)[1]) %>%
+  ungroup()
+```
+
+
+# CB
+
+```{r}
+mafft.dir <- '/Users/patch/Documents/HBKU/Research/F-BOX/popu/CB_mafft/'
+tajima.table %<>%
+  rowwise() %>%
+  mutate(CB.tajima = tajima(Orthogroup,mafft.dir)[2])
+
+tajima.table %<>%
+  rowwise() %>%
+  mutate(CB.nvc = tajima(Orthogroup,mafft.dir)[1]) %>%
+  ungroup()
+```
+
+# CN nvc
+
+```{r}
+c <- c("#ff595e", "#6a4c93", "#ffca3a","#8ac926","#1982c4", "lightgrey")
+tajima.table %>%
+  dplyr::select(Orthogroup,Order,CN.nvc,CB.nvc) %>%
+  melt(id.vars = c('Orthogroup','Order'),variable.name = 'Species',value.name = 'nvc') %>%
+  filter(!is.na(nvc)) %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot(aes(x=Order,y=nvc,fill = Order)) +
+  geom_boxplot(outliers = F,color="black",linewidth = 1) +
+  scale_fill_manual(values = c) +
+  xlab('') + ylab('Nucleotide diversity (π)') +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1)
+  ) +
+  facet_grid(~Species,scales = 'free_x')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/nvc.pdf',height = 4,width = 7)
+```
+
+
+
+```{r}
+c <- c("#ff595e", "#6a4c93", "#ffca3a","#8ac926","#1982c4", "lightgrey")
+tajima.table %>%
+  dplyr::select(Orthogroup,Order,CN.tajima,CB.tajima) %>%
+  melt(id.vars = c('Orthogroup','Order'),variable.name = 'Species',value.name = 'tajima') %>%
+  filter(!is.na(tajima)) %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot(aes(x=Order,y=tajima,fill = Order)) +
+  geom_boxplot(outliers = F,color="black",linewidth = 1) +
+  scale_fill_manual(values = c) +
+  xlab('') + ylab('Tajima\'s D') +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1)
+  ) +
+  facet_grid(~Species,scales = 'free_x')
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/tajima.pdf',height = 4,width = 7)
+```
+
+
+
+
+# wilcoxon ranked test
+```{r}
+
+tajima.table %>%
+  dplyr::select(Orthogroup,Order,CN.nvc,CB.nvc) %>%
+  melt(id.vars = c('Orthogroup','Order'),variable.name = 'Species',value.name = 'nvc') %>%
+  filter(!is.na(nvc)) %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  filter(Order %in% c('Shared Core','Cni-specific')) %>%
+  wilcox.test(nvc ~ Order, data = .,
+                   exact = FALSE)
+
+tajima.table %>%
+  dplyr::select(Orthogroup,Order,CN.nvc,CB.nvc) %>%
+  melt(id.vars = c('Orthogroup','Order'),variable.name = 'Species',value.name = 'nvc') %>%
+  filter(!is.na(nvc)) %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  filter(Order %in% c('Shared Core','Cbr-specific')) %>%
+  wilcox.test(nvc ~ Order, data = .,
+                   exact = FALSE)
+
+tajima.table %>%
+  dplyr::select(Orthogroup,Order,CN.nvc,CB.nvc) %>%
+  melt(id.vars = c('Orthogroup','Order'),variable.name = 'Species',value.name = 'nvc') %>%
+  filter(!is.na(nvc)) %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  filter(Order %in% c('Cni-specific','Cbr-specific')) %>%
+  wilcox.test(nvc ~ Order, data = .,
+                   exact = FALSE)
+```
+
+
+```{r}
+tajima.table %>%
+  dplyr::select(Orthogroup,Order,CN.tajima,CB.tajima) %>%
+  melt(id.vars = c('Orthogroup','Order'),variable.name = 'Species',value.name = 'tajima') %>%
+  filter(!is.na(tajima)) %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  filter(Order %in% c('Shared Core','Cni-specific')) %>%
+  wilcox.test(tajima ~ Order, data = .,
+                   exact = FALSE)
+```
+
+
+
+
+
+
+```{r}
+mafftt <- read.dna("/Users/patch/Documents/HBKU/Research/F-BOX/popu/mafft/OG0000000.mafft", format = "fasta")
+```
+
+
+```{r}
+nuc.div(mafftt)
+```
+
+```{r}
+tajima.test(mafftt)
+```
+

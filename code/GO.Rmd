@@ -1,0 +1,127 @@
+---
+title: "Enrichment GO"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(clusterProfiler)
+library(enrichplot)
+library(GO.db)
+```
+
+```{r}
+# Extract GO IDs
+go_ids <- keys(GO.db)
+
+# Create a data frame to store results
+go_data <- tibble(
+    GOID = go_ids,
+    TERM = Term(GOTERM[go_ids]),
+    ONTOLOGY = Ontology(GOTERM[go_ids]),
+    DEFINITION = Definition(GOTERM[go_ids]),
+    stringsAsFactors = FALSE
+)
+go_data
+```
+
+
+```{r}
+setwd('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/GO')
+read.table('JU1421.GO.txt', col.names = c('Gene','GO')) %>%
+  tibble() %>%
+  dplyr::select(GO,Gene) -> JU1421.T2G
+JU1421.T2G
+
+read.table('AF16.GO.txt', col.names = c('Gene','GO')) %>%
+  tibble() %>%
+  dplyr::select(GO,Gene) -> AF16.T2G
+AF16.T2G
+```
+
+```{r}
+JU1421.T2G %>%
+  left_join(go_data,by=join_by(GO == GOID)) %>%
+  filter(ONTOLOGY == 'BP') %>%
+  dplyr::select(GO,Gene) -> JU1421.T2G.BP
+
+JU1421.T2G.BP
+
+AF16.T2G %>%
+  left_join(go_data,by=join_by(GO == GOID)) %>%
+  filter(ONTOLOGY == 'BP') %>%
+  dplyr::select(GO,Gene) -> AF16.T2G.BP
+
+AF16.T2G.BP
+
+
+
+```
+
+```{r}
+go_data %>% 
+  dplyr::select(GOID,TERM) -> T2N
+```
+
+
+```{r}
+G <- Expand.Gene
+G <- Contract.Gene
+G <- CN.Ex.gene
+G <- up.G
+G <- down.G
+```
+
+
+```{r}
+enricher(G, TERM2GENE = JU1421.T2G.BP , TERM2NAME = T2N) -> GO.res
+GO.res
+#barplot(GO.res)
+dotplot(GO.res)
+```
+
+# supplementary figure
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/11.ExCon.Enrichment/JU1421.Expand.GO.pdf',width = 7,height = 5)
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/11.ExCon.Enrichment/JU1421.Contract.GO.pdf',width = 7,height = 5)
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/11.ExCon.Enrichment/AF16.Expand.GO.pdf',width = 7,height = 5)
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/11.ExCon.Enrichment/AF16.Contract.GO.pdf',width = 7,height = 5)
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/14.embExp/JU1421.emb.up.GO.pdf',width = 7,height = 5)
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/14.embExp/JU1421.emb.down.GO.pdf',width = 7,height = 5)
+```
+
+
+
+
+
+
+```{r}
+res@result %>%
+  as_tibble()
+head(res)
+```
+
+
+
+
+```{r}
+dotplot(res,showCategory =20)
+```
+
+

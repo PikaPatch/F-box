@@ -1,0 +1,252 @@
+---
+title: "Genome"
+output: html_notebook
+---
+
+
+
+```{r}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(stringr)
+library(ggtree)
+library(treeio)
+library(ggtreeExtra)
+library(ggnewscale)
+library(ggridges)
+```
+
+# these table are convenient in all figure
+# strain.table contains all strains data
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+# gene.bed contains all gene data
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/bed/gene.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup')) %>%
+  tibble() -> gene.bed
+```
+
+
+# read the tree file
+```{r}
+CBCN.tree <- read.tree('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/SpeciesTree_rooted.txt')
+
+```
+
+
+
+# Fig 1
+```{r}
+drop.tip.c <- c('N2','BRE','CRE')
+
+CBCN.tree %>%
+  drop.tip(drop.tip.c) %>%
+  as_tibble() %>%
+  left_join(strain.table %>% dplyr::select(SPE,STR),by = join_by(label == STR)) %>%
+  as.treedata %>% 
+  ggtree(color="black", size=1) +
+
+  geom_tiplab(size=6, color="black",offset=.003,align=TRUE,linetype = 'dotted') +
+  geom_treescale(x = 0, width=0.005, color='#594F4F',linesize = 1, fontsize = 5) +
+  geom_tippoint(aes(color= SPE), shape = 16 , size=5) + 
+  hexpand(.35) +
+  scale_color_manual(values = c('#9AAED2','#F6B06D')) +
+  geom_hilight(node = 18, fill = '#D1B69D',type = "rect", alpha = .2,extendto = 1) +
+  geom_hilight(node = 26, fill = '#9DBDD1',type = "rect", alpha = .2,extendto = 1) +
+  
+  geom_fruit(
+  data = strain.table %>% dplyr::select(STR,Len),
+  geom = geom_col,
+  mapping = aes(y = STR, x = Len/1000000,fill = SPE),
+  position = 'auto',
+  offset = 0.5,pwidth = 0.5,size = 0.5,color='black',
+  axis.params=list(axis = "x",title='Genome Size',title.size = 6,
+                   nbreak=10,line.size=1,line.color='black',
+                   text.size=3,text.angle=90,hjust=1),
+  grid.params=list(vline=F,lineend='round',linetype=0,size=0)
+  ) +
+  scale_fill_manual(values = c('#9AAED2','#F6B06D')) +
+  
+  new_scale_fill() +
+  
+  geom_fruit(
+  data = strain.table %>% dplyr::select(STR,Gene),
+  geom = geom_col,
+  mapping = aes(y = STR, x = Gene/1000, fill = SPE),
+  position = 'auto',
+  offset = 0.1,pwidth = 0.5,size = 0.5,color='black',
+  axis.params=list(axis = "x",title='Gene Number',title.size = 6,
+                   nbreak=10,line.size=1,line.color='black',
+                   text.size=3,text.angle=90,hjust=1),
+  grid.params=list(vline=F,lineend='round',linetype=0,size=0)
+  ) +
+  scale_fill_manual(values = c('#9AAED2','#F6B06D')) +
+  
+  new_scale_fill() +
+  
+  geom_fruit(
+  data = strain.table %>% 
+  dplyr::select(STR,Retro,TE,Unclassified,Small,RollingC,Simple) %>%
+  mutate(Repeat = rowSums(across(where(is.numeric)))) %>%
+  mutate('Non-Repeat' = 100 - Repeat) %>%
+  dplyr::select(STR,Repeat,'Non-Repeat') %>%
+  melt(id=c('STR'),variable.name = 'Type',value.name = 'P') ,
+  geom = geom_col,
+  mapping = aes(y = STR, x = P,fill=Type),
+  position = position_stackx(),
+  offset = 0.1,pwidth = 0.5,size = 0.5,color='black',
+  axis.params=list(axis = "x",title='Repeat%',title.size = 6,
+                   nbreak=5,line.size=1,line.color='black',
+                   text.size=3,text.angle=90,hjust=1),
+  grid.params=list(vline=F,lineend='round',linetype=1,size=0)
+  ) +
+  scale_fill_manual(values = c('#a8dadc','#54819b')) +
+  
+  new_scale_fill() +
+  
+  geom_fruit(
+  data = strain.table %>% 
+  dplyr::select(STR,Retro,TE,Unclassified,Small,RollingC,Simple) %>%
+    rename("DNA TE" = TE, "Retro TE" = Retro, "Small RNA" = Small , "Simple repeat" = Simple, "RC TE" = RollingC) %>%
+  mutate(RepeatContent = rowSums(across(where(is.numeric)))) %>%
+  mutate(across(where(is.numeric), ~ .x / RepeatContent)) %>%
+  dplyr::select(-RepeatContent) %>%
+  melt(id='STR',variable.name = 'Type',value.name = 'P') %>%
+  mutate(Type = Type %>% factor( level = c('DNA TE','Retro TE','RC TE','Small RNA','Simple repeat','Unclassified'))),
+  geom = geom_col(),
+  mapping = aes(y = STR, x = P,fill=Type),
+  position = position_stackx(),
+  offset = 0.1,pwidth = 0.5,size = 0.5,color='black',
+  axis.params=list(axis = "x",title='Repeat type%',title.size = 6,
+                   nbreak=2,line.size=1,line.color='black',
+                   text.size=3,text.angle=90,hjust=1),
+  grid.params=list(vline=F,lineend='round',linetype=1,size=0)
+  ) +
+  scale_fill_brewer(palette = "Set2",direction=-1) +
+  theme(legend.position="bottom")
+  
+```
+
+```{r}
+ggsave("/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure1/Tree.pdf",width=15)
+```
+
+
+# gene length ggridge
+
+```{r}
+gene.bed %>%
+  left_join(strain.table %>% dplyr::select(SPE,STR) ,by=join_by(STR==STR)) %>%
+  mutate(Len = End - Start) %>%
+  mutate(STR = STR %>% factor(levels = STR.order) ) %>%
+  ggplot() + 
+  geom_density_ridges(aes(Len/1000,STR,fill=SPE),show.legend = F,scale = 1.2) +
+  xlim(c(0,10)) +
+  scale_fill_manual(values = c('#9AAED2','#F6B06D')) +
+  theme_ridges(grid=F,center_axis_labels=T) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.line.x = element_line(linewidth = 1),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+        )
+```
+
+```{r}
+ggsave("/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure1/GeneL.pdf",width = 2)
+```
+
+# CDS length ggridge
+# load CDS.bed which contains all CDS data
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/CDS/CDS.bed',col.names = c('Chr','Start','End','Len','STR')) %>%
+  tibble -> CDS.bed
+```
+
+```{r}
+CDS.bed %>%
+  left_join(strain.table %>% dplyr::select(SPE,STR) ,by=join_by(STR==STR)) %>%
+  mutate(STR = STR %>% factor(levels = STR.order) ) %>%
+  ggplot() + 
+  geom_density_ridges(aes(Len,STR,fill=SPE),show.legend = F,scale = 1.1) + 
+  xlim(c(0,500)) + 
+  scale_fill_manual(values = c('#9AAED2','#F6B06D')) +
+  theme_ridges(grid=F,center_axis_labels=T) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.line.x = element_line(linewidth = 1),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+        )
+```
+
+```{r}
+ggsave("/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure1/CDS.pdf",width = 2)
+```
+
+
+
+
+# supplementary figure
+```{r}
+strain.table %>%
+  dplyr::select(STR,SPE,Len,Gene) %>%
+  ggplot(aes(Len/1000000,Gene)) +
+  geom_point(aes(colour = SPE),size = 3) +
+  geom_smooth(method = 'lm',formula = 'y ~ x' ,color = '#fc4e2a') +
+  geom_label(aes(label = STR),hjust=0.5,vjust=1.7,size = 3.8) +
+  scale_color_manual(values = c('#9AAED2','#F6B06D')) +
+  #xlim(c(100,145)) +
+  xlab('Genome size(Mb)') +
+  ylab('Gene number') +
+  theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1)) +
+  facet_wrap(~ SPE,scales = 'free_x')
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/2.Size and gene cor/size_gene_cor.pdf',height = 3)
+```
+
+
+
+```{r}
+strain.table %>%
+  dplyr::select(STR,SPE,Len,Gene) %>%
+  lm( Gene ~ Len, .) %>%
+  summary()
+```
+
+
+```{r}
+strain.table %>%
+  filter(SPE == 'CNI') -> CNI.Len.table
+
+strain.table %>%
+  filter(SPE == 'CBR') -> CBR.Len.table
+
+cor(CNI.Len.table %>% pull(Gene), CNI.Len.table %>% pull(Len)  ,method = 'pearson')
+
+cor(CBR.Len.table %>% pull(Gene), CBR.Len.table %>% pull(Len)  ,method = 'pearson')
+```
+
+
+
+
+
+
+
+
+
+
+

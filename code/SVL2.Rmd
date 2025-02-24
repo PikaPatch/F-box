@@ -1,0 +1,160 @@
+---
+title: "SVL2"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(stringr)
+```
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/SV/L2.s.out',col.names = c('rChr','rStart','rEnd','R','Q','qChr','qStart','qEnd','ID','pID','Type','Copy','STR')) %>%
+  tibble() %>%
+  dplyr::select(-c('R','Q','qChr','qStart','qEnd','ID','Copy')) %>%
+  rename(Chr=rChr,Start=rStart,End=rEnd) -> L2.s.out
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/SV/L1.out',col.names = c('Chr','Start','End','R','Q','qChr','qStart','qEnd','ID','pID','Type','Copy','STR')) %>%
+  tibble() -> L1.out
+
+L1.out %>%
+  group_by(STR,Type) %>%
+  reframe(pLen = sum(End - Start)) -> L1.out.r
+```
+
+# supplementary figure
+```{r}
+c <- c("#ff595e", "#43aa8b", "#ffca3a","#8ac926","#1982c4", "#6a4c93", "lightgrey")
+Type.order <- c('HDR','INS','DEL','CPG','CPL','TDM','SNP')
+STR.order <- c( CN[! CN == 'JU1421'] , CB[! CB == 'AF16'])
+L2.s.out %>%
+  filter(Type %>% str_detect("AL",negate=T)) %>% 
+  mutate(pType = str_remove_all(pID, "\\d+")) %>%
+  filter(Type != 'HDR') %>%
+  #filter( pType != 'SYN') %>%
+  group_by(STR,pType,Type) %>%
+  reframe(Len = sum(End - Start + 1)) %>%
+  left_join(L1.out.r, by = c("STR"="STR","pType"="Type")) %>%
+  mutate(pType2 = if_else(pType == 'SYN','Synteny','Rearranged')) %>%
+  mutate(STR = STR %>% factor(levels = STR.order %>% rev) ) %>%
+  mutate(Type = Type %>% factor(levels = Type.order %>% rev) ) -> p.data
+
+p.data %>%
+  ggplot(aes(Len/1000000,STR,fill=Type)) +
+  geom_col() +
+  scale_fill_manual(values = c,name = 'Rearranged type') +
+  theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1)) +
+  #scale_fill_brewer(palette = "Set1",direction=1,name = 'Rearranged type') +
+  xlab('Length(Mb)') + ylab('') + 
+  facet_wrap(~ pType2, scales = 'free_x')
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/6.SNP/SNP.pdf',width = 5,height = 3)
+```
+
+
+
+```{r}
+
+
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/SV/L2.s.AFJU.out',col.names = c('rChr','rStart','rEnd','R','Q','qChr','qStart','qEnd','ID','pID','Type','Copy')) %>%
+  tibble() -> L2.s.AJ.out
+
+L2.s.AJ.out %>%
+  dplyr::select(-c('R','Q','qChr','qStart','qEnd','ID','Copy')) %>%
+  rename(Chr=rChr,Start=rStart,End=rEnd) -> L2.s.JUAF.out
+
+L2.s.AJ.out %>%
+  dplyr::select(-c('R','Q','rChr','rStart','rEnd','ID','Copy')) %>%
+  rename(Chr=qChr,Start=qStart,End=qEnd) -> L2.s.AFJU.out
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/SV/L1.AFJU.out',col.names = c('Chr','Start','End','R','Q','qChr','qStart','qEnd','ID','pID','Type','Copy','STR')) %>%
+  tibble() -> L1.AFJU.out
+
+L1.AFJU.out %>%
+  filter(Chr!= '-') %>%
+  group_by(Type) %>%
+  mutate(
+    Start = Start %>% as.integer(),
+    End = End %>% as.integer(),
+  ) %>%
+  reframe(pLen = sum(End - Start)) -> L1.JUAF.out.r
+
+L1.AFJU.out %>%
+  filter(qChr!= '-') %>%
+  group_by(Type) %>%
+  mutate(
+    qStart = qStart %>% as.integer(),
+    qEnd = qEnd %>% as.integer(),
+  ) %>%
+  reframe(pLen = sum(qEnd - qStart)) -> L1.AFJU.out.r
+```
+
+
+# supplementary figure
+```{r}
+c <- c("#ff595e", "#43aa8b", "#ffca3a","#8ac926","#1982c4", "#6a4c93", "lightgrey")
+Type.order <- c('HDR','INS','DEL','CPG','CPL','TDM','SNP')
+L2.s.JUAF.out %>%
+  filter(Type %>% str_detect("AL",negate=T)) %>% 
+  mutate(pType = str_remove_all(pID, "\\d+")) %>%
+  filter(Type != 'HDR') %>%
+  #filter( pType != 'SYN') %>%
+  group_by(pType,Type) %>%
+  reframe(Len = sum(abs(End - Start) + 1)) %>%
+  left_join(L1.JUAF.out.r, by = c("pType"="Type")) %>%
+  mutate(pType2 = if_else(pType == 'SYN','Synteny','Rearranged')) %>%
+  mutate(STR = 'JUAF') %>%
+  mutate(Type = Type %>% factor(levels = Type.order %>% rev) ) -> p.data.JUAF
+
+L2.s.AFJU.out %>%
+  filter(Type %>% str_detect("AL",negate=T)) %>% 
+  mutate(pType = str_remove_all(pID, "\\d+")) %>%
+  filter(Type != 'HDR') %>%
+  #filter( pType != 'SYN') %>%
+  group_by(pType,Type) %>%
+  reframe(Len = sum(abs(End - Start) + 1)) %>%
+  left_join(L1.AFJU.out.r, by = c("pType"="Type")) %>%
+  mutate(pType2 = if_else(pType == 'SYN','Synteny','Rearranged')) %>%
+  mutate(STR = 'AFJU') %>%
+  mutate(Type = Type %>% factor(levels = Type.order %>% rev) )-> p.data.AFJU
+
+p.data.JUAF %>%
+  bind_rows(p.data.AFJU) %>%
+  ggplot(aes(Len/1000000,STR,fill=Type)) +
+  geom_col() +
+  scale_fill_manual(values = c,name = 'Rearranged type') +
+  theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1)) +
+  #scale_fill_brewer(palette = "Set1",direction=1,name = 'Rearranged type') +
+  xlab('Size (Mb)') + ylab('') + 
+  facet_wrap(~ pType2, scales = 'free_x')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/6.SNP/AFJU.SNP.pdf',width = 5,height = 1.5)
+```
+
+

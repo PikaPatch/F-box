@@ -1,0 +1,191 @@
+---
+title: "Ex Go"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(clusterProfiler)
+library(enrichplot)
+library(GO.db)
+```
+
+
+
+```{r}
+GO.id <- keys(GO.db)
+
+GO.data <- tibble(
+    GOID = GO.id,
+    TERM = Term(GOTERM[GO.id]),
+    ONTOLOGY = Ontology(GOTERM[GO.id]),
+    DEFINITION = Definition(GOTERM[GO.id]),
+    stringsAsFactors = FALSE
+)
+
+GO.data %>% 
+  dplyr::select(GOID,TERM) -> T2N
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/GO.txt', col.names = c('Gene','GO','STR')) %>%
+  tibble() -> GO.txt
+
+GO.txt %>%
+  left_join(GO.data,by=join_by(GO == GOID)) %>%
+  filter(ONTOLOGY == 'BP') %>%
+  dplyr::select(GO,Gene,STR) -> T2G.BP
+```
+
+
+
+# GeneCount
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/pan/Orthogroups.GeneCount.tsv',header = T) %>% 
+  tibble() -> GeneCount
+
+GeneCount %>%
+  dplyr::select(-Total) %>%
+  filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  mutate(across(where(is.numeric), ~ if_else(.x > 0, 1, 0))) -> GeneCount.OPA
+
+GeneCount.OPA %>%
+  #mutate(Total = rowSums(across(where(is.numeric))) ) %>%
+  mutate(CN.Core = if_else( rowSums(across(all_of(CN))) == length(CN) , T, F)  ) %>%
+  mutate(CB.Core = if_else( rowSums(across(all_of(CB))) == length(CB) , T, F)  ) %>%
+  mutate(CN.Ex = if_else( rowSums(across(all_of(CB))) == 0 , T, F)  ) %>%
+  mutate(CB.Ex = if_else( rowSums(across(all_of(CN))) == 0 , T, F)  ) %>%
+  mutate(Private = if_else( rowSums(across(all_of(c(CN,CB)))) == 1 , T, F)  ) %>%
+  mutate(in.Out = if_else( rowSums(across(all_of(c('N2','BRE','CRE')))) > 1 , T, F)  ) -> GeneCount.OPA.C
+
+GeneCount %>%
+  left_join(
+    GeneCount.OPA.C %>% 
+        mutate(Order = case_when(
+          CN.Core & CB.Core & in.Out ~ "Core.Out",
+          CN.Core & CB.Core ~ "Core",
+          CN.Core & !CN.Ex & in.Out ~ "CNS.Core.Out",
+          CN.Core & !CN.Ex ~ "CNS.Core",
+          CB.Core & !CB.Ex & in.Out ~ "CBS.Core.Out",
+          CB.Core & !CB.Ex ~ "CBS.Core",
+          CN.Ex & in.Out ~ "CN.Ex.Out",
+          CN.Ex ~ "CN.Ex",
+          CB.Ex & in.Out ~ "CB.Ex.Out",
+          CB.Ex ~ "CB.Ex",
+          in.Out ~ "Out",
+          .default = "Cloud"
+          )) %>%
+      dplyr::select(Orthogroup,CN.Core,CB.Core,CN.Ex,CB.Ex,in.Out,Order), by = join_by(Orthogroup == Orthogroup )
+  ) -> GeneCount.O.C
+
+GeneCount.O.C %>%
+  filter(Order == 'CN.Ex') %>%
+  pull(Orthogroup) -> CN.Ex.Orthogroup
+
+GeneCount.O.C %>%
+  filter(Order == 'CB.Ex') %>%
+  pull(Orthogroup) -> CB.Ex.Orthogroup
+```
+
+
+```{r}
+CN.enr <- function(s){
+  gene.bed %>%
+  filter(Orthogroup %in% CN.Ex.Orthogroup) %>%
+  filter(STR == s) %>% pull(Gene) -> Gene
+  enricher(Gene , TERM2GENE = T2G.BP %>% filter(STR == s) %>% dplyr::select(GO,Gene) , TERM2NAME = T2N,pvalueCutoff = 0.05) -> res
+  return( res@result %>% as_tibble() %>% mutate(STR = s) )
+}
+
+CB.enr <- function(s){
+  gene.bed %>%
+  filter(Orthogroup %in% CB.Ex.Orthogroup) %>%
+  filter(STR == s) %>% pull(Gene) -> Gene
+  enricher(Gene , TERM2GENE = T2G.BP %>% filter(STR == s) %>% dplyr::select(GO,Gene) , TERM2NAME = T2N,pvalueCutoff = 0.05) -> res
+  return( res@result %>% as_tibble() %>% mutate(STR = s) )
+}
+```
+
+
+
+```{r}
+CN %>% 
+  lapply(CN.enr) %>%
+  data.table::rbindlist() %>%
+  as_tibble() -> CN.res
+
+CB %>% 
+  lapply(CB.enr) %>%
+  data.table::rbindlist() %>%
+  as_tibble() -> CB.res
+```
+
+# Fig 3 G
+```{r}
+CN.res %>%
+  bind_rows(CB.res) %>%
+  arrange(pvalue) %>% 
+  pull(Description) %>% unique() -> GO.order
+
+CN.res %>%
+  group_by(STR) %>%
+  arrange(pvalue) %>%
+  slice_head(n=5) %>% 
+  ungroup() %>% pull(ID) %>% unique() -> CN.res.ID.10
+
+CB.res %>%
+  group_by(STR) %>%
+  arrange(pvalue) %>%
+  slice_head(n=5) %>% 
+  ungroup() %>% pull(ID) %>% unique() -> CB.res.ID.10
+
+
+CN.res %>%
+  filter(ID %in% CN.res.ID.10) %>%
+  #mutate(ID = ID %>% factor(levels = GO.order[GO.order %in% CN.res.ID.10])) %>%
+  bind_rows(CB.res %>% filter(ID %in% CB.res.ID.10)) %>%
+  left_join(strain.table %>% dplyr::select(STR,SPE),by = join_by(STR==STR)) %>%
+  ggplot(aes(STR,factor(Description,levels = GO.order %>% rev),size=Count,fill= -log2(pvalue)) ) +
+  geom_point(stroke=1,shape=21,color='black') +
+  theme_minimal() +
+  #scale_fill_gradient(low = "#0D92F4", high = "#C62E2E", na.value = NA) +
+  #scale_fill_gradient(low = "white", high = "#C62E2E", na.value = NA) +
+  scale_fill_gradient2(low = "#0D92F4", high = "#C62E2E",mid = "white", na.value = NA,midpoint = 50) +
+  #scale_fill_viridis_c(option = 'plasma') +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1),
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1)
+    ) +
+  ylab('') +
+  xlab('') +
+  #facet_grid(~ SPE,scales = 'free')
+  facet_wrap(~ SPE,scales = 'free',ncol= 2)
+  
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/Ex.GO.pdf',width = 12,height = 3)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

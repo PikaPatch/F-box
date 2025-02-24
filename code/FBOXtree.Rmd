@@ -1,0 +1,257 @@
+---
+title: "FBOXtree"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(stringr)
+library(ggtree)
+library(treeio)
+library(ggtreeExtra)
+library(ggnewscale)
+library(tidyr)
+```
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup')) %>%
+  tibble() -> gene.bed
+```
+
+```{r}
+gene.bed %>% 
+  filter(STR == 'JU1421') %>%
+  filter(!str_detect(Chr,'^Chr')) %>%
+  pull(Gene) -> Scaf.Gene
+```
+
+
+
+```{r}
+FBOXFBA.tree <- read.tree('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/FBOXtree/FBOXFBA2.raxml.bestTree') 
+
+FTH.tree <- read.tree('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/FBOXtree/FBOXFTH.raxml.bestTree') 
+
+unKnow.tree <- read.tree('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/FBOXtree/FBOXunknown.raxml.bestTree') 
+```
+
+# Fig 5 C
+```{r}
+FBOXFBA.tree.Chr %>%
+  as_tibble() %>%
+  left_join(gene.bed %>% dplyr::select(Chr,Gene),by = join_by(label == Gene)) %>%
+  as.treedata %>% 
+  ggtree(mapping=aes(color=Chr),
+    size=0.5) + 
+  geom_tiplab(size=0,align=T,offset=0,linesize=0.1) +
+  scale_color_brewer(palette = "Dark2",direction=1,na.value = "grey")
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure5/FBOX-FBA.tree.pdf',height = 7,width = 5)
+```
+
+
+```{r}
+FTH.tree.Chr %>%
+  as_tibble() %>%
+  left_join(gene.bed %>% dplyr::select(Chr,Gene),by = join_by(label == Gene)) %>%
+  as.treedata %>% 
+  ggtree(mapping=aes(color=Chr),
+    size=0.5) + 
+  geom_tiplab(size=0,align=T,offset=0,linesize=0.1) +
+  scale_color_brewer(palette = "Dark2",direction=1,na.value = "grey")
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/15.FTHtree/FTH.tree.pdf',height = 5,width = 7)
+```
+
+
+
+```{r}
+unKnow.tree.Chr %>%
+  as_tibble() %>%
+  left_join(gene.bed %>% dplyr::select(Chr,Gene),by = join_by(label == Gene)) %>%
+  as.treedata %>% 
+  ggtree(mapping=aes(color=Chr),
+    size=0.5) + 
+  geom_tiplab(size=0,align=T,offset=0,linesize=0.1) +
+  scale_color_brewer(palette = "Dark2",direction=1,na.value = "grey")
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/15.FTHtree/unKnow.tree.pdf',height = 5,width = 7)
+```
+
+
+
+
+
+# Fig 5 C
+```{r}
+FBOXFBA.tree %>%
+  drop.tip(Scaf.Gene) -> FBOXFBA.tree.Chr 
+
+FBOXFBA.tree.Chr %>%
+  fortify() %>% 
+  filter(isTip) %>% 
+  arrange(y) %>% pull(label) -> Gene.order
+
+
+gene.bed %>%
+  filter(Gene %in% Gene.order) %>%
+  mutate(pos = (End + Start) / 2) -> P.gene.bed
+
+
+P.gene.bed %>%
+  dplyr::select(Gene,pos) %>%
+  crossing(P.gene.bed %>% 
+             filter(Gene %in% Gene.order) %>% 
+             dplyr::select(Gene,pos), .name_repair = "universal") %>%
+  rename(Gene1=Gene...1,Gene2=Gene...3) %>%
+  left_join(P.gene.bed %>% dplyr::select(Chr,Gene) %>% rename(Chr1 = Chr) , by = join_by(Gene1 == Gene)) %>%
+  left_join(P.gene.bed %>% dplyr::select(Chr,Gene) %>% rename(Chr2 = Chr) , by = join_by(Gene2 == Gene)) %>%
+  mutate(cha = if_else(Chr1 == Chr2, abs(pos...2 - pos...4) ,NA)) %>%
+  dplyr::select(Gene1,Gene2,cha) %>%
+  mutate(Gene1 = Gene1 %>% factor(levels = Gene.order)) %>%
+  mutate(Gene2 = Gene2 %>% factor(levels = Gene.order)) -> dist.matrix.data
+
+dist.matrix.data %>%
+  mutate(cha = if_else(cha > 500000, 500000,cha)) %>%
+  ggplot(aes(Gene1,Gene2)) +
+  geom_tile(aes(fill=log10(cha))) +
+  #geom_text(aes(label = cha), color = "white") +
+  #scale_y_discrete( labels = Pfam.30$Desc %>% rev) +
+  #scale_fill_gradient(low = "#e63946", high = "#f1faee", na.value = '#f1faee',name = 'Distance(Mb)')+
+  scale_fill_gradient2(
+    low = "#e63946", high = '#344966', 
+                      mid = '#f5df4d',midpoint = 4.6,
+                      na.value = '#272727',name = 'Distance log10Mb') +
+  theme_void() +
+  theme(legend.position = 'right')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure5/FBOX-FBA.heat.pdf',height = 5,width = 7)
+```
+
+
+# FTH
+# supplementary figure
+```{r}
+FTH.tree %>%
+  drop.tip(Scaf.Gene) -> FTH.tree.Chr 
+
+FTH.tree.Chr %>%
+  fortify() %>% 
+  filter(isTip) %>% 
+  arrange(y) %>% pull(label) -> Gene.order
+
+
+gene.bed %>%
+  filter(Gene %in% Gene.order) %>%
+  mutate(pos = (End + Start) / 2) -> P.gene.bed
+
+
+P.gene.bed %>%
+  dplyr::select(Gene,pos) %>%
+  crossing(P.gene.bed %>% 
+             filter(Gene %in% Gene.order) %>% 
+             dplyr::select(Gene,pos), .name_repair = "universal") %>%
+  rename(Gene1=Gene...1,Gene2=Gene...3) %>%
+  left_join(P.gene.bed %>% dplyr::select(Chr,Gene) %>% rename(Chr1 = Chr) , by = join_by(Gene1 == Gene)) %>%
+  left_join(P.gene.bed %>% dplyr::select(Chr,Gene) %>% rename(Chr2 = Chr) , by = join_by(Gene2 == Gene)) %>%
+  mutate(cha = if_else(Chr1 == Chr2, abs(pos...2 - pos...4) ,NA)) %>%
+  dplyr::select(Gene1,Gene2,cha) %>%
+  mutate(Gene1 = Gene1 %>% factor(levels = Gene.order)) %>%
+  mutate(Gene2 = Gene2 %>% factor(levels = Gene.order)) -> dist.matrix.data
+
+dist.matrix.data %>%
+  mutate(cha = if_else(cha > 500000, 500000,cha)) %>%
+  ggplot(aes(Gene1,Gene2)) +
+  geom_tile(aes(fill=log10(cha))) +
+  #geom_text(aes(label = cha), color = "white") +
+  #scale_y_discrete( labels = Pfam.30$Desc %>% rev) +
+  #scale_fill_gradient(low = "#e63946", high = "#f1faee", na.value = '#f1faee',name = 'Distance(Mb)')+
+  scale_fill_gradient2(
+    low = "#e63946", high = '#344966', 
+                      mid = '#f5df4d',midpoint = 4.6,
+                      na.value = '#272727',name = 'Distance log10Mb') +
+  theme_void() +
+  theme(legend.position = 'right')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/15.FTHtree/FTH.heat.pdf',height = 5,width = 7)
+```
+
+
+
+# unKnow
+# supplementary figure
+```{r}
+unKnow.tree %>%
+  drop.tip(Scaf.Gene) -> unKnow.tree.Chr 
+
+unKnow.tree.Chr %>%
+  fortify() %>% 
+  filter(isTip) %>% 
+  arrange(y) %>% pull(label) -> Gene.order
+
+
+gene.bed %>%
+  filter(Gene %in% Gene.order) %>%
+  mutate(pos = (End + Start) / 2) -> P.gene.bed
+
+
+P.gene.bed %>%
+  dplyr::select(Gene,pos) %>%
+  crossing(P.gene.bed %>% 
+             filter(Gene %in% Gene.order) %>% 
+             dplyr::select(Gene,pos), .name_repair = "universal") %>%
+  rename(Gene1=Gene...1,Gene2=Gene...3) %>%
+  left_join(P.gene.bed %>% dplyr::select(Chr,Gene) %>% rename(Chr1 = Chr) , by = join_by(Gene1 == Gene)) %>%
+  left_join(P.gene.bed %>% dplyr::select(Chr,Gene) %>% rename(Chr2 = Chr) , by = join_by(Gene2 == Gene)) %>%
+  mutate(cha = if_else(Chr1 == Chr2, abs(pos...2 - pos...4) ,NA)) %>%
+  dplyr::select(Gene1,Gene2,cha) %>%
+  mutate(Gene1 = Gene1 %>% factor(levels = Gene.order)) %>%
+  mutate(Gene2 = Gene2 %>% factor(levels = Gene.order)) -> dist.matrix.data
+
+dist.matrix.data %>%
+  mutate(cha = if_else(cha > 500000, 500000,cha)) %>%
+  ggplot(aes(Gene1,Gene2)) +
+  geom_tile(aes(fill=log10(cha))) +
+  #geom_text(aes(label = cha), color = "white") +
+  #scale_y_discrete( labels = Pfam.30$Desc %>% rev) +
+  #scale_fill_gradient(low = "#e63946", high = "#f1faee", na.value = '#f1faee',name = 'Distance(Mb)')+
+  scale_fill_gradient2(
+    low = "#e63946", high = '#344966', 
+                      mid = '#f5df4d',midpoint = 4.6,
+                      na.value = '#272727',name = 'Distance log10Mb') +
+  theme_void() +
+  theme(legend.position = 'right')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/15.FTHtree/unKnow.heat.pdf',height = 5,width = 7)
+```
+
+
+
+
+

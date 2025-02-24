@@ -1,0 +1,263 @@
+---
+title: "SV"
+output: html_notebook
+---
+
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/SV/L1.out',col.names = c('rChr','rStart','rEnd','R','Q','qChr','qStart','qEnd','ID','pID','Type','Copy','STR')) %>%
+  tibble() -> L1.out
+L1.out
+
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/SV/L1.AFJU.out',col.names = c('rChr','rStart','rEnd','R','Q','qChr','qStart','qEnd','ID','pID','Type','Copy','STR')) %>%
+  tibble() -> L1.AFJU.out
+
+L1.AFJU.out %>%
+  dplyr::select(rChr,rStart,rEnd,Type) %>%
+  rename(Chr = rChr,
+         Start = rStart,
+         End = rEnd) %>%
+  filter(Chr != '-') %>%
+  mutate(Start = as.integer(Start), End = as.integer(End)) %>%
+  mutate(STR = 'JU1421') -> JU1421.L1
+
+L1.AFJU.out %>%
+  dplyr::select(qChr,qStart,qEnd,Type) %>%
+  rename(Chr = qChr,
+         Start = qStart,
+         End = qEnd) %>%
+  filter(Chr != '-') %>%
+  mutate(Start = as.integer(Start), End = as.integer(End)) %>%
+  mutate(STR = 'AF16') -> AF16.L1
+```
+
+
+```{r}
+L1.AFJU.out %>%
+  dplyr::select(rChr,rStart,rEnd,Type,STR) %>%
+  rename(Chr=rChr,Start=rStart,End=rEnd) %>%
+  filter(Chr != '-') %>%
+  mutate(across(c(Start, End), as.integer)) %>%
+  mutate(STR = if_else(STR=='AFJU','JUAF',STR)) -> CN.syn
+
+L1.AFJU.out %>%
+  dplyr::select(qChr,qStart,qEnd,Type,STR) %>%
+  rename(Chr=qChr,Start=qStart,End=qEnd) %>%
+  filter(Chr != '-') %>%
+  mutate(across(c(Start, End), as.integer)) %>%
+  mutate(STR = if_else(STR=='JUAF','AFJU',STR)) -> CB.syn
+```
+
+
+# Fig 2 A
+```{r}
+c <- c("#ff595e", "#43aa8b", "#ffca3a","#8ac926","#1982c4", "#6a4c93", "lightgrey")
+CN.syn %>%
+  bind_rows(CB.syn) %>%
+  group_by(Type,STR) %>%
+  reframe(Len = sum(End-Start)) %>%
+  mutate(Type = Type %>% factor(levels = L1.order %>% rev)) %>%
+  mutate(rLen = round(Len/1000000,digits = 2)) %>%
+  ggplot(aes(x=STR,y=Len/1000000,fill=Type)) +
+  geom_col(color = 'black',linewidth = 0) +
+  geom_text(aes(label = rLen), position = position_stack(vjust = .5)) +
+  scale_fill_manual(values = c) +
+  scale_x_discrete(labels = c(
+      "AFJU" = "Cbr_ref vs. Cni_ref",
+      "JUAF" = "Cni_ref vs. Cbr_ref"
+    )) +
+  scale_y_continuous(breaks = c(0,25,50,75,100,125)) +
+  xlab('') +
+  ylab('Size') +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    legend.position = 'none') +
+  guides(fill=guide_legend(title="SV Type")) 
+```
+
+```{r}
+file.name <- '/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure2/AFJUSV.pdf'
+ggsave(file.name,width = 3.5,height = 5)
+```
+
+
+# Fig 2 B
+```{r}
+
+L1.order <- c('SYN','INVDP','INVTR','DUP','INV','TRANS','NOTAL')
+L1.order.lab <- c('Sytenic region','Inverted duplication','Inverted translocation','Duplication','Inversion','Translocation','Divergent region')
+c <- c("#ff595e", "#43aa8b", "#ffca3a","#8ac926","#1982c4", "#6a4c93", "lightgrey")
+
+L1.out %>%
+  dplyr::select(rChr,rStart,rEnd,Type,STR)%>%
+  rename(Chr = rChr,
+         Start = rStart,
+         End = rEnd) %>%
+  left_join(strain.table %>% dplyr::select(STR,SPE),by= c('STR'='STR') ) %>%
+  dplyr::select(Chr,Start,End,Type,STR,SPE) %>%
+  mutate(STRN =  factor(STR , levels = STR %>% unique()) %>% unclass ) %>%
+  mutate(Len = End - Start) %>%
+  group_by(STR,SPE,Type) %>%
+  reframe(Len = sum(Len)) %>%
+  mutate(STR = STR %>% factor(levels = c(CB %>% rev,CN %>% rev)) ) %>%
+  mutate(SPE = if_else(SPE == 'CBR','Cbr_intra vs. Cbr_ref','Cni_intra vs. Cni_ref')) %>%
+  mutate(Type = case_when(
+    Type == 'NOTAL' ~ 'Divergent region',
+    Type == 'INV' ~ 'Inversion',
+    Type == 'DUP' ~ 'Duplication',
+    Type == 'INVDP' ~ 'Inverted duplication',
+    Type == 'INVTR' ~ 'Inverted translocation',
+    Type == 'TRANS' ~ 'Translocation',
+    Type == 'SYN' ~ 'Sytenic region',
+    .default = Type
+  )) %>%
+  mutate(Type = Type %>% factor(levels = L1.order.lab %>% rev)) %>%
+  ggplot(aes(Len/1000000,STR,fill=Type)) +
+  geom_col() +
+  geom_text(aes(label = round(Len/1000000,digits = 2) ) , position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = c) +
+  scale_x_continuous(breaks = c(0,25,50,75,100,125)) +
+  #facet_wrap(~ SPE,scales = 'free_y') +
+  theme_classic() +
+  xlab("Size") +
+  ylab("") +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    #axis.text.x = element_text(angle = 0, hjust = 1,size = 10),
+    axis.text.y = element_text(size = 10),
+    legend.background = element_rect(fill="#f6f3e4",
+                                  size=0.5, linetype="solid", 
+                                  colour ="#577590")) +
+  guides(fill=guide_legend(title="SV Type"))+
+  facet_wrap(~ SPE,scales = 'free_y')
+  
+```
+
+
+
+
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/JU1421.NOTAL.100k.bed',col.names = c('Chr','Start','End','NOTALC','Len',"bin",'Cov','STR')) %>%
+  tibble() -> JU1421.NOTAL.100k.bed
+
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/AF16.NOTAL.100k.bed',col.names = c('Chr','Start','End','NOTALC','Len',"bin",'Cov','STR')) %>%
+  tibble() -> AF16.NOTAL.100k.bed
+```
+
+
+# Fig 2 F
+```{r}
+STR.order <- c("EG5268","JU1422","JU2484","JU2617","JU4356","VSL2202","YR106","ZF1220","COM","AF16" )
+JU1421.NOTAL.100k.bed %>%
+  group_by(STR,Chr) %>%
+  mutate(id = row_number()) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_raster(aes(id / 10,STR %>% factor(levels = STR.order %>% rev),fill = Cov)) +
+  scale_fill_viridis_c(option = 'plasma')+
+  scale_x_continuous(breaks = c(0,5,10,15,20,25,30)) +
+  facet_grid(~ Chr) +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "#fcead9") , 
+    axis.text.y=element_text(face="bold", color="black",size=15),
+    axis.line.x=element_blank(),
+    axis.line.y=element_line(linewidth = .5, colour = "black"),
+    strip.background =element_rect(fill="#F6B06D")) +
+  ylab('') + xlab('')
+
+```
+
+```{r}
+file.name <- '/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure2/JU.SubS.Div.pdf'
+ggsave(file.name,width = 17,height = 4)
+```
+
+
+```{r}
+STR.order <- c("ED3036","HK104","JU349","QR24","QX1410","VX34","COM","JU1421")
+AF16.NOTAL.100k.bed %>%
+  group_by(STR,Chr) %>%
+  mutate(id = row_number()) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_raster(aes(id / 10,STR %>% factor(levels = STR.order %>% rev),fill = Cov)) +
+  scale_fill_viridis_c(option = 'plasma')+
+  scale_x_continuous(breaks = c(0,5,10,15,20,25,30)) +
+  facet_grid(~ Chr) +Fi
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "#e5eaf3") , 
+    axis.text.y=element_text(face="bold", color="black",size=15),
+    axis.line.x=element_blank(),
+    axis.line.y=element_line(linewidth = .5, colour = "black"),
+    strip.background =element_rect(fill="#9AAED2")) +
+  ylab('') + xlab('')
+```
+
+
+```{r}
+file.name <- '/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure2/AF.SubS.Div.pdf'
+ggsave(file.name,width = 17,height = 4)
+```
+
+
+# Fig 2 FFig
+```{r}
+grid.newpage()
+venn.plot <- draw.pairwise.venn(
+  area2 = 49.58,
+  area1 = 58.35,
+  cross.area = 35.76,
+  col = c('#000000','#000000'), 
+  fill = c('#BEDADA','#E89B7E'),
+  alpha = 0.6,lwd=3,
+  cex = rep(2,3)
+  )
+
+pdf(file = '/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure2/CN.DivIntersect.pdf',width = 5,height = 5)
+grid.draw(venn.plot)
+dev.off()
+```
+
+
+```{r}
+grid.newpage()
+venn.plot <- draw.pairwise.venn(
+  area1 = 30.91,
+  area2 = 7.35,
+  cross.area = 5.14,
+  col = c('#000000','#000000'), 
+  fill = c('#BEDADA','#E89B7E'),
+  alpha = 0.6,lwd=3,
+  cex = rep(2,3)
+  )
+
+pdf(file = '/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure2/CB.DivIntersect.pdf',width = 5,height = 5)
+grid.draw(venn.plot)
+dev.off()
+```
+
+
+
+

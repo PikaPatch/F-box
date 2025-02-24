@@ -1,0 +1,69 @@
+---
+title: "CompNee"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+```
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/NEE.div/cbr_df_divergent.tsv') %>%
+  as_tibble() -> cbr_df_divergent.tsv
+cbr_df_divergent.tsv %>%
+  filter(STRAIN == 'QR24') %>%
+  dim
+
+cbr_df_divergent.tsv %>%
+  filter(STRAIN == 'ED3036') %>%
+  dim
+
+cbr_df_divergent.tsv %>%
+  filter(STRAIN == 'QX1410') %>%
+  dim
+```
+
+```{r}
+cbr_df_divergent.tsv$STRAIN %>% sort() %>% unique() -> CB.nee
+CB.in.nee <- CB[CB %in% CB.nee]
+CB.in.nee
+```
+
+
+```{r}
+cbr_df_divergent.tsv %>% 
+  filter(STRAIN %in% CB.in.nee) %>%
+  dplyr::select(CHROM,START_BIN,END_BIN,STRAIN) %>%
+  rename(
+    Chr = CHROM,
+    Start = START_BIN,
+    End = END_BIN,
+    STR = STRAIN
+  ) %>%
+  mutate(NEEID = paste0(STR,'_NEE_',row_number())) %>%
+  dplyr::select(-STR) %>%
+  write.table(
+    file = '/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/NEE.div/NEE.CB4.div.bed',
+    quote = F,row.names = F,col.names = F, sep = '\t'
+    )
+```
+
+
+
+
+
+

@@ -1,0 +1,272 @@
+---
+title: "RNAemb"
+output: html_notebook
+---
+
+
+```{r}
+library(dplyr)
+library(DESeq2)
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+```
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup')) %>%
+  tibble() -> gene.bed
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Pfam.txt',col.names = c('Gene','Pfam','Pfam.Desc','Start','End','IPR','STR'),sep = '\t',quote = "") %>%
+  tibble() -> Pfam.txt
+```
+
+```{r}
+Pfam.txt %>%
+  filter(STR == 'JU1421') %>%
+  filter(Pfam == 'PF00646') %>%
+  pull(Gene) %>% unique() -> PF00646.Gene
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/RNAemb/JU1421.adult.count.txt',header = T) %>%
+  tibble() %>%
+  dplyr::rename(female.rep1 = '...mapping.JU1421_female_rep1.bam',
+         female.rep2 = '...mapping.JU1421_female_rep2.bam',
+         female.rep3 = '...mapping.JU1421_female_rep3.bam',
+         male.rep1 = '...mapping.JU1421_male_rep1.bam',
+         male.rep2 = '...mapping.JU1421_male_rep2.bam',
+         male.rep3 = '...mapping.JU1421_male_rep3.bam'
+         ) -> a.count.tab
+
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/RNAemb/JU1421.emb.count.txt',header = T) %>%
+  tibble() %>%
+  dplyr::rename(emb.rep1 = '...mapping.JU1421_emb_rep1.bam',
+                emb.rep2 = '...mapping.JU1421_emb_rep2.bam',
+                emb.rep3 = '...mapping.JU1421_emb_rep3.bam'
+                ) -> b.count.tab
+
+a.count.tab %>%
+  dplyr::select(Geneid,matches('rep')) %>%
+  left_join(b.count.tab %>% dplyr::select(Geneid,matches('rep')) , by=join_by(Geneid == Geneid) ) -> count.tab
+```
+
+```{r}
+count.tab %>% 
+  column_to_rownames(var = "Geneid") %>%
+  as.matrix() -> cts
+```
+
+```{r}
+coldata <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/RNAemb/coldata.txt',header = T) %>%
+  tibble() %>%
+  column_to_rownames(var = 'SampleName')
+
+coldata <- coldata[colnames(cts),]
+coldata$Stage <- factor(coldata$Stage)
+coldata$Sex <- factor(coldata$Sex)
+```
+
+
+
+# fpkm
+
+```{r}
+
+smallestGroupSize <- 3
+keep <- rowSums(cts >= 10) >= smallestGroupSize
+
+cts1 <- cts[keep,]
+
+dds1 <- DESeqDataSetFromMatrix(countData = cts1,
+                              colData = coldata,
+                              design = ~ Stage)
+
+gene.bed %>% 
+  filter(STR == 'JU1421') %>%
+  filter(Gene %in% rownames(dds1)) %>%
+  mutate(Gene = Gene %>% factor(levels = rownames(dds1))) %>%
+  arrange(Gene) %>%
+  GRanges() -> JU1421.filtered.Gene
+
+rowRanges(dds1) <- split(JU1421.filtered.Gene, mcols(JU1421.filtered.Gene)$Gene)
+
+dds1$Stage <- relevel(dds1$Stage, ref = "adult")
+
+```
+
+
+# Fig 5 D E
+```{r}
+fpkm(dds1) %>%
+  as_tibble(rownames = 'Gene') -> fpkm.dds1
+
+c <- c('#01b0bb','#fb4e07') %>% alpha(alpha = 0.6)
+
+fpkm.dds1 %>%
+  melt(id.vars = "Gene",variable.name = 'Sample', value.name = 'FPKM') %>%
+  mutate(Stage = if_else(str_detect(Sample,'male'),'Adult','Embryo') ) %>%
+  group_by(Gene,Stage) %>%
+  reframe(mFPKM = mean(FPKM)) %>%
+  mutate(FBOX = if_else(Gene %in% PF00646.Gene,'F-Box Gene','Others')) -> p.data
+
+p.data %>%
+  ggplot(aes(Stage,log2(mFPKM+1))) +
+  geom_violin(aes(fill = Stage),linewidth = 0.7) +
+  geom_boxplot(outliers = F,color="black",width = 0.05,linewidth = 0.3) +
+  scale_fill_manual(values = c) +
+  #ylim(c(0,10)) +
+  theme_classic() +
+  facet_wrap(~ FBOX,scales = 'free_x') +
+  xlab('') + ylab('log2(mean FPKM + 1)') +
+  theme(
+    legend.position = 'none',
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1)
+    ) 
+
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure5/FBOX-FPKM-2.0.pdf',width = 4,height = 3)
+```
+
+# wilcoxon ranked test
+```{r}
+p.data %>%
+  filter(FBOX == 'F-Box Gene') %>%
+  wilcox.test(mFPKM ~ Stage, data = .,
+                   exact = FALSE)
+
+p.data %>%
+  filter(FBOX == 'Others') %>%
+  wilcox.test(mFPKM ~ Stage, data = .,
+                   exact = FALSE)
+```
+
+
+
+
+
+
+# DEseq
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = cts,
+                              colData = coldata,
+                              design = ~ Stage)
+
+dds$Stage <- relevel(dds$Stage, ref = "adult")
+
+gene.bed %>% 
+  filter(STR == 'JU1421') %>%
+  mutate(Gene = Gene %>% factor(levels = rownames(dds))) %>%
+  arrange(Gene) %>%
+  GRanges() -> JU1421.Gene
+
+rowRanges(dds) <- split(JU1421.Gene, mcols(JU1421.Gene)$Gene)
+
+```
+
+
+# filtering low expression
+```{r}
+smallestGroupSize <- 3
+keep <- rowSums(counts(dds) >= 10) >= smallestGroupSize
+#keep <- rowSums(counts(dds) ) >= 20
+dds <- dds[keep,]
+```
+
+
+
+```{r}
+dds <- DESeq(dds)
+```
+
+```{r}
+res <- results(dds,lfcThreshold = 0,alpha=0.01,pAdjustMethod="BH")
+```
+
+
+# supplementary figure
+```{r}
+c <- c('#ff595e','#1982c4','grey','black')
+G.Order <- c('Up','Down','Normal','FBOX')
+
+Padj.cutoff <- 0.01
+log2FoldChange.cutoff <- 2
+
+res %>%
+  as_tibble(rownames = 'Gene') %>%
+  mutate(FBOX = if_else(Gene %in% PF00646.Gene, T ,F)) %>%
+  mutate(Sig = if_else(padj < Padj.cutoff, T ,F)) %>%
+  mutate(Up.cut = if_else(log2FoldChange > log2FoldChange.cutoff, T ,F)) %>%
+  mutate(Down.cut = if_else(log2FoldChange <  -log2FoldChange.cutoff, T ,F)) %>%
+  mutate(G = case_when(
+    Up.cut & Sig ~ 'Up',
+    Down.cut & Sig ~ 'Down',
+    .default = 'Normal'
+  )) %>%
+  mutate(G = case_when(
+    Up.cut & Sig & FBOX ~ 'FBOX',
+    Down.cut & Sig & FBOX ~ 'FBOX',
+    .default = G
+  )) %>%
+  filter(! is.na(pvalue)) -> p.data
+
+p.data %>% 
+  arrange(desc(!FBOX)) %>%
+  ggplot() +
+    geom_point(aes(log2FoldChange, -log2(padj) , color = factor(G,levels = G.Order)) , size = .5,alpha = 1) +
+    scale_color_manual(values = c) +
+    geom_hline(yintercept= - log2(Padj.cutoff), linetype="dashed", 
+                  color = "red", linewidth=.5) +
+    geom_vline(xintercept= - log2FoldChange.cutoff, linetype="dashed", 
+                  color = "red", linewidth=.5) +
+    geom_vline(xintercept= log2FoldChange.cutoff, linetype="dashed", 
+                  color = "red", linewidth=.5) +
+  xlim(c(-20,20)) +
+    #geom_text(data = p.data %>% filter(G) , aes(label = Gene)) +
+    theme_classic() +
+    theme(
+      panel.border = element_rect(colour = "black", fill=NA, linewidth=1)
+    )
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/14.embExp/volcano.2.0.pdf',width = 5,height = 2.5)
+```
+
+
+# get gene to GO
+
+```{r}
+res %>%
+  as_tibble(rownames = "Gene") %>% 
+  dplyr::filter(log2FoldChange > log2FoldChange.cutoff) %>%
+  dplyr::filter(padj < 0.01) %>%
+  pull(Gene) -> up.G
+length(up.G)
+up.G %in% PF00646.Gene %>% sum
+
+res %>%
+  as_tibble(rownames = "Gene") %>% 
+  dplyr::filter(log2FoldChange <  - log2FoldChange.cutoff) %>%
+  dplyr::filter(padj < 0.01) %>%
+  pull(Gene) -> down.G
+length(down.G)
+down.G %in% PF00646.Gene %>% sum
+```
+

@@ -1,0 +1,141 @@
+---
+title: "Gene based Pan-genome"
+output: html_notebook
+---
+
+
+```{r}
+library(ggplot2)
+library(ggthemes)
+library(reshape2)
+```
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Orthogroups.GeneCount.tsv',header = T) %>% 
+  tibble() -> GeneCount
+```
+
+
+
+```{r}
+
+CoreN <- function(SPEc) { 
+  GeneCount %>%
+  dplyr::select(all_of(SPEc)) %>%
+  filter(rowSums(. <= 0) == 0) %>% # Filter rows where all values are greater than 0
+  dim -> wcl
+  return ( wcl[1] )
+}
+
+PanN <- function(SPEc) { 
+  GeneCount %>%
+  dplyr::select(all_of(SPEc)) %>%
+  filter(rowSums(. > 0) > 0) %>% # Filter rows where any value is greater than 0
+  dim -> wcl
+  return ( wcl[1] )
+}
+
+
+CoreNBox <- function(N,CaeSPE) {
+  combn(CaeSPE,N) %>% 
+  apply(2, CoreN) -> A
+  tibble(
+    N = N,
+    Count = A
+  ) -> res
+  return (res)
+}
+
+PanNBox <- function(N,CaeSPE) {
+  combn(CaeSPE,N) %>% 
+  apply(2, PanN) -> A
+  tibble(
+    N = N,
+    Count = A
+  ) -> res
+  return (res)
+}
+```
+
+
+
+```{r}
+
+c(1:9) %>% 
+  lapply(CoreNBox,CaeSPE=CN) %>% 
+  bind_rows() %>%
+  #mutate(N = as.character(N)) %>%
+  mutate(Type='Core') -> Core
+
+c(1:9) %>% 
+  lapply(PanNBox,CaeSPE=CN) %>% 
+  bind_rows() %>%
+  #mutate(N = as.character(N)) %>%
+  mutate(Type='Pan') %>%
+  bind_rows(Core) -> CN.pan.box
+
+c(1:7) %>% 
+  lapply(CoreNBox,CaeSPE=CB) %>% 
+  bind_rows() %>%
+  #mutate(N = as.character(N)) %>%
+  mutate(Type='Core') -> Core
+
+c(1:7) %>% 
+  lapply(PanNBox,CaeSPE=CB) %>% 
+  bind_rows() %>%
+  #mutate(N = as.character(N)) %>%
+  mutate(Type='Pan') %>%
+  bind_rows(Core) -> CB.pan.box
+```
+
+
+# Fig 3 A
+```{r}
+lw <- 0.8
+CB.col <- c('#50A0D1','#73ADD1','#9DBDD1','#516E80')
+CN.col <- c('#F6B06D','#D1A073','#D1B69D','#806D5B')
+c <- c('#E9C46A','#F4A261','#2A9D8F','#287271')
+ggplot( ,aes(x=N,y=Count)) +
+  geom_smooth(data=CN.pan.box %>% filter(Type == 'Pan'),method='loess',formula = 'y ~ x',se=F,color='red',linewidth=lw) +
+  geom_smooth(data=CN.pan.box %>% filter(Type == 'Core'),method='loess',formula = 'y ~ x',se=F,color='black',linewidth=lw) + 
+  geom_smooth(data=CB.pan.box %>% filter(Type == 'Pan'),method='loess',formula = 'y ~ x',se=F,color='red',linewidth=lw) +
+  geom_smooth(data=CB.pan.box %>% filter(Type == 'Core'),method='loess',formula = 'y ~ x',se=F,color='black',linewidth=lw) +
+  geom_point(data=CB.pan.box,size = 2,shape=21,color='black',stroke = .3,fill = '#50A0D1') +
+  geom_point(data=CN.pan.box ,size = 2,shape=24,color='black',stroke = .3,fill='#F6B06D') + 
+  scale_x_continuous(breaks = seq(1, 16, by = 1)) +
+  ylim(c(14000,27000)) +
+  ylab('Number of gene families') +
+  xlab('Number of genomes') +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1)
+  )
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/Pan.pdf',width = 3,height = 3)
+```
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,290 @@
+---
+title: "CAFE"
+output: html_notebook
+---
+
+
+
+```{r}
+library(dplyr)
+library(ggtree)
+library(treeio)
+```
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Pfam.txt',col.names = c('Gene','Pfam','Pfam.Desc','Start','End','IPR','STR'),sep = '\t',quote = "") %>%
+  tibble() -> Pfam.txt
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/OtherS.Pfam.txt',col.names = c('Gene','Pfam','Pfam.Desc','Start','End','IPR','STR'),sep = '\t',quote = "") %>%
+  tibble() -> OtherS.Pfam.txt
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Orthogroups.gene.txt',col.names = c('Gene','Orthogroup'),sep = '\t',quote = "") %>%
+  tibble() -> Orthogroups.gene.txt
+```
+
+
+
+```{r}
+Pfam.txt %>% 
+  bind_rows(OtherS.Pfam.txt) %>%
+  filter(Pfam == 'PF00646') %>%
+  pull(Gene) %>% unique() -> PF00646.Gene
+
+Pfam.txt %>% 
+  bind_rows(OtherS.Pfam.txt) %>%
+  filter(Pfam == 'PF00651') %>%
+  pull(Gene) %>% unique() -> PF00651.Gene
+
+Pfam.txt %>% 
+  bind_rows(OtherS.Pfam.txt) %>%
+  filter(Pfam == 'PF00917') %>%
+  pull(Gene) %>% unique() -> PF00917.Gene 
+
+Orthogroups.gene.txt %>% 
+  filter(Gene %in% PF00646.Gene) %>% 
+  pull(Orthogroup) %>% unique() -> PF00646.Orthogroup
+
+Orthogroups.gene.txt %>% 
+  filter(Gene %in% PF00651.Gene) %>% 
+  pull(Orthogroup) %>% unique() -> PF00651.Orthogroup
+
+Orthogroups.gene.txt %>% 
+  filter(Gene %in% PF00917.Gene) %>% 
+  pull(Orthogroup) %>% unique() -> PF00917.Orthogroup
+```
+
+
+# read the results table
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/result_summary.tsv',header = T) %>%
+  as_tibble() %>%
+  rename(Orthogroup=FamilyID,STR = TaxonID) -> CAFE.plotter.res
+```
+
+```{r}
+GO.tree <- read.tree('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/SpeciesTree_rooted.txt')
+```
+
+
+```{r}
+Pvalue.cutoff <- 0.05
+
+CAFE.plotter.res %>%
+  filter(Pvalue < Pvalue.cutoff) %>%
+  mutate(Type = if_else(Change > 0 , 'Expand','Contract')) %>%
+  group_by(STR,Type) %>%
+  reframe(FamiliesC = n()) %>%
+  arrange(Type) %>%
+  group_by(STR) %>%
+  reframe(ExCon = paste(FamiliesC, collapse = ' / +') %>% paste0('-',.)) -> excon.tab
+
+CAFE.plotter.res %>%
+  filter(Orthogroup %in% PF00646.Orthogroup ) %>%
+  filter(Pvalue < Pvalue.cutoff) %>%
+  mutate(Type = if_else(Change > 0 , 'Expand','Contract')) %>%
+  group_by(STR,Type) %>%
+  reframe(FamiliesC = n()) %>%
+  tidyr::complete(STR,Type) %>%
+  replace(is.na(.), 0) %>%
+  arrange(desc(Type)) %>%
+  group_by(STR) %>%
+  reframe(ExCon = paste(FamiliesC, collapse = ' / -') %>% paste0('+',.))  -> PF00646.excon.tab
+
+CAFE.plotter.res %>%
+  filter(Orthogroup %in% PF00651.Orthogroup ) %>%
+  filter(Pvalue < Pvalue.cutoff) %>%
+  mutate(Type = if_else(Change > 0 , 'Expand','Contract')) %>%
+  group_by(STR,Type) %>%
+  reframe(FamiliesC = n()) %>%
+  tidyr::complete(STR,Type) %>%
+  replace(is.na(.), 0) %>%
+  arrange(desc(Type)) %>%
+  group_by(STR) %>%
+  reframe(ExCon = paste(FamiliesC, collapse = ' / -') %>% paste0('+',.))  -> PF00651.excon.tab
+
+CAFE.plotter.res %>%
+  filter(Orthogroup %in% PF00917.Orthogroup ) %>%
+  filter(Pvalue < Pvalue.cutoff) %>%
+  mutate(Type = if_else(Change > 0 , 'Expand','Contract')) %>%
+  group_by(STR,Type) %>%
+  reframe(FamiliesC = n()) %>%
+  tidyr::complete(STR,Type) %>%
+  replace(is.na(.), 0) %>%
+  arrange(desc(Type)) %>%
+  group_by(STR) %>%
+  reframe(ExCon = paste(FamiliesC, collapse = ' / -') %>% paste0('+',.))  -> PF00917.excon.tab
+
+```
+
+# Fig4 D E
+```{r}
+GO.tree %>%
+  drop.tip( strain.table %>% filter(REF == 'SUB') %>% pull(STR) %>% as.vector() ) %>%
+  as_tibble() %>%
+  mutate(label = if_else(is.na(label),node %>% as.character(),label) ) %>%
+  left_join(excon.tab,by = join_by(label == STR)) %>%
+  #left_join(P.gene.bed %>% dplyr::select(Chr,Gene),by = join_by(label == Gene)) 
+  as.treedata %>%
+  ggtree(color="black", size=1) +
+  geom_tippoint(shape = 16 , size=5) + 
+  #geom_tiplab(aes(label=ExCon),geom='label',size=4,align=T,offset=0.1,linesize=0.1,color='#f1515e',fill='white',hjust=0.8) +
+  geom_tiplab(size=5,align=T,offset=0.08,linesize=0.1,hjust=.8) + 
+  geom_tiplab(aes(label=ExCon),geom='label',size=4,align=T,offset=0.1,linesize=0.1,color='#f1515e',fill='white',hjust=1.25,vjust=1.6) +
+  geom_nodelab(aes(label=ExCon),geom='label',size=4,color='#f1515e',hjust=1.1,vjust=1.6,fill='white')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure4/ExpCon.tree.pdf',height = 3,width = 4)
+```
+
+
+
+# Fig5 A
+```{r}
+GO.tree %>%
+  drop.tip( strain.table %>% filter(REF == 'SUB') %>% pull(STR) %>% as.vector() ) %>%
+  as_tibble() %>%
+  mutate(label = if_else(is.na(label),node %>% as.character(),label) ) %>%
+  left_join(PF00646.excon.tab,by = join_by(label == STR)) %>%
+  #left_join(P.gene.bed %>% dplyr::select(Chr,Gene),by = join_by(label == Gene)) 
+  as.treedata %>%
+  ggtree(color="black", size=1) +
+  geom_tippoint(shape = 16 , size=5) + 
+  geom_tiplab(aes(label=ExCon),geom='label',size=4,align=T,offset=0.1,linesize=0.1,color='#f1515e',fill='white',hjust=0.8) +
+  #geom_tiplab(size=5,align=T,offset=0.08,linesize=0.1,hjust=.8) + 
+  #geom_tiplab(aes(label=ExCon),geom='label',size=4,align=T,offset=0.1,linesize=0.1,color='#f1515e',fill='white',hjust=1.25,vjust=1.6) 
+  geom_nodelab(aes(label=ExCon),geom='label',size=4,color='#f1515e',hjust=1.1,vjust=1.6,fill='white')
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure5/FBOX.ExpCon.tree.pdf',height = 3)
+```
+
+
+
+
+
+# Fig5 A
+```{r}
+c <- c('#33658a','#ef798a','#ffffff')
+STR.order.t <- c('JU1421','AF16','9','CRE','8','BRE','7','N2')
+CAFE.plotter.res %>%
+  filter(Orthogroup %in% PF00646.Orthogroup ) %>%
+  mutate(sig = if_else( Pvalue < Pvalue.cutoff , T,F) ) %>%
+  mutate(ex = if_else( Change > 0 , T,F) ) %>%
+  mutate(Order = case_when(
+    sig & ex ~ 'Expansion',
+    sig & !ex ~ 'Contraction',
+    .default = 'Neutral'
+  )) %>%
+  mutate(STR = STR %>% factor(levels = STR.order.t %>% rev) ) %>% 
+  left_join(PF00646.excon.tab, by = join_by(STR == STR)) -> p.data
+
+p.data %>%
+  ggplot(aes(Orthogroup,STR %>% factor(levels = STR.order.t %>% rev))) +
+  geom_tile(aes(fill = Order),color = "grey") +
+  scale_fill_manual(values = c,name = 'Status') +
+  scale_y_discrete(position = "right") + 
+  xlab('F-Box gene families') + ylab('')+
+  theme_minimal()+
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.line.x = element_blank()
+        )
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure5/FBOX.ExpCon.heat.pdf',width = 13,height = 4)
+```
+
+
+# supplementary table
+```{r}
+CAFE.plotter.res %>%
+  filter(Orthogroup %in% PF00646.Orthogroup ) %>%
+  rename(Node = STR) %>%
+  write.table(file = '/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/Tables/Cafe.txt',
+            quote = F,row.names = F,sep = '\t')
+```
+
+
+
+```{r}
+
+CAFE.plotter.res %>%
+  filter(STR == 'JU1421') %>%
+  #filter(Pvalue < Pvalue.cutoff) %>%
+  filter(Change > 0) %>%
+  pull(Orthogroup) -> JU1421.Expand.OG
+gene.bed %>%
+  filter(STR == 'JU1421') %>%
+  filter(Orthogroup %in% Expand.OG) %>%
+  pull(Gene) -> JU1421.Expand.Gene
+
+
+CAFE.plotter.res %>%
+  filter(STR == 'JU1421') %>%
+  filter(Pvalue < Pvalue.cutoff) %>%
+  filter(Change < 0) %>%
+  pull(Orthogroup) -> JU1421.Contract.OG
+gene.bed %>%
+  filter(STR == 'JU1421') %>%
+  filter(Orthogroup %in% Contract.OG) %>%
+  pull(Gene) -> JU1421.Contract.Gene
+
+
+
+CAFE.plotter.res %>%
+  filter(STR == 'AF16') %>%
+  #filter(Pvalue < Pvalue.cutoff) %>%
+  filter(Change > 0) %>%
+  pull(Orthogroup) -> AF16.Expand.OG
+gene.bed %>%
+  filter(STR == 'AF16') %>%
+  filter(Orthogroup %in% Expand.OG) %>%
+  pull(Gene) -> AF16.Expand.Gene
+
+
+CAFE.plotter.res %>%
+  filter(STR == 'AF16') %>%
+  filter(Pvalue < Pvalue.cutoff) %>%
+  filter(Change < 0) %>%
+  pull(Orthogroup) -> AF16.Contract.OG
+gene.bed %>%
+  filter(STR == 'AF16') %>%
+  filter(Orthogroup %in% Contract.OG) %>%
+  pull(Gene) -> AF16.Contract.Gene
+```
+
+
+
+
+
+```{r}
+p.data %>%
+  dplyr::select(Orthogroup,STR,Order) %>%
+  dcast(Orthogroup ~ STR) %>%
+  dplyr::select(Orthogroup,JU1421,CRE,BRE) %>%
+  filter(JU1421 == 'Expansion') %>%
+  filter(CRE != 'Expansion') %>% filter(BRE != 'Expansion')
+```

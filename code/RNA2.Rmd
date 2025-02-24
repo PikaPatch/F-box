@@ -1,0 +1,154 @@
+---
+title: "RNA2"
+output: html_notebook
+---
+
+```{r}
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+```
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup')) %>%
+  tibble() -> gene.bed
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Orthogroups.GeneCount.tsv',header = T) %>% 
+  tibble() -> GeneCount
+```
+
+
+```{r}
+setwd('/Users/patch/Documents/HBKU/Research/F-BOX/FPKM/')
+
+count.tab <- tibble()
+
+
+for (i in CN) {
+    tmp.data <- read.table(paste0(i,'.count.txt'),header = T) %>% 
+      tibble() %>% 
+      rename(counts = paste0('...',i,'.bam')) %>%
+      mutate(STR = i)
+    count.tab %<>% bind_rows(tmp.data)
+}
+```
+
+
+```{r}
+
+fpkm.tab <- tibble()
+
+for (i in CN) {
+  tmp.data <- count.tab %>%
+    filter(STR == i) %>%
+    dplyr::select(Geneid,counts) %>%
+    tibble::column_to_rownames(var = 'Geneid' ) %>%
+    mutate(counts2=counts) %>%
+    as.matrix() %>%
+    countToFPKM::fpkm(
+      count.tab %>% filter(STR == i) %>% pull(Length) ,
+      meanFragmentLength = c(300,300)
+      ) %>%
+    as_tibble(rownames = 'Gene') %>%
+    dplyr::select(Gene,counts) %>%
+    dplyr::rename(fpkm = counts)
+  
+  fpkm.tab %<>% bind_rows(tmp.data)
+}
+```
+
+
+
+```{r}
+GeneCount %>%
+  dplyr::select(-Total) %>%
+  filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  mutate(across(where(is.numeric), ~ if_else(.x > 0, 1, 0))) -> GeneCount.OPA
+
+GeneCount.OPA %>%
+  #mutate(Total = rowSums(across(where(is.numeric))) ) %>%
+  mutate(CN.Core = if_else( rowSums(across(all_of(CN))) == length(CN) , T, F)  ) %>%
+  mutate(CB.Core = if_else( rowSums(across(all_of(CB))) == length(CB) , T, F)  ) %>%
+  mutate(CN.Ex = if_else( rowSums(across(all_of(CB))) == 0 , T, F)  ) %>%
+  mutate(CB.Ex = if_else( rowSums(across(all_of(CN))) == 0 , T, F)  ) %>%
+  mutate(in.Out = if_else( rowSums(across(all_of(c('N2','BRE','CRE')))) > 1 , T, F)  ) -> GeneCount.OPA.C
+
+GeneCount.OPA.C %>%
+  mutate(Order = case_when(
+    CN.Core & CB.Core ~ "Core",
+    CN.Core & !CN.Ex ~ "Cni specific core",
+    CB.Core & !CB.Ex ~ "Cbr specific core",
+    CN.Ex ~ "Cni specific",
+    CB.Ex ~ "Cbr specific",
+    .default = "Dispensable"
+  )) %>%
+  #mutate(Order = Order %>% factor(levels = c('Core','CNS.Core','CBS.Core','CN.Ex','CB.Ex','Cloud'))) %>%
+  mutate(Order = Order %>% factor(levels = c('Core','Cni specific core','Cbr specific core','Cni specific','Cbr specific','Dispensable') %>% rev)) %>%
+  mutate(Order2 = case_when(
+    CN.Core & CB.Core & in.Out ~ "Core.Out",
+    CN.Core & CB.Core ~ "Core",
+    CN.Core & !CN.Ex & in.Out ~ "CNS.Core.Out",
+    CN.Core & !CN.Ex ~ "CNS.Core",
+    CB.Core & !CB.Ex & in.Out ~ "CBS.Core.Out",
+    CB.Core & !CB.Ex ~ "CBS.Core",
+    CN.Ex & in.Out ~ "CN.Ex.Out",
+    CN.Ex ~ "CN.Ex",
+    CB.Ex & in.Out ~ "CB.Ex.Out",
+    CB.Ex ~ "CB.Ex",
+    in.Out ~ "Out",
+    .default = "Cloud"
+  )) %>%
+  mutate(Order2 = Order2 %>% factor(levels = c('Core.Out','Core','CNS.Core.Out','CNS.Core','CBS.Core.Out','CBS.Core','CN.Ex.Out','CN.Ex','CB.Ex.Out','CB.Ex','Out','Cloud'))) -> GeneCount.OPA.CO
+
+
+
+```
+
+
+
+# supplementary figure
+```{r}
+c <- c("#ff595e", "#6a4c93","#ffca3a","#8ac926", "lightgrey")
+gene.bed %>%
+  filter(STR %in% CN) %>%
+  left_join(fpkm.tab, by = join_by(Gene == Gene)) %>%
+  left_join(GeneCount.OPA.CO %>% dplyr::select(Orthogroup,Order) , by = join_by(Orthogroup == Orthogroup)) %>%
+  filter(! is.na(Order)) %>%
+  ggplot(aes(log2(fpkm + 1),Order,fill = Order)) +
+  scale_fill_manual(values = c %>% rev) +
+  geom_boxplot(outliers = F) +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    #panel.grid = element_blank(),
+    panel.background = element_rect(fill = "#fcead9") , 
+    axis.line.y=element_line(linewidth = .5, colour = "black"),
+    strip.background =element_rect(fill="#F6B06D"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1)) +
+  xlab('log2(FPKM + 1)') + ylab('') +
+  facet_wrap(~ STR) 
+
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/9.Core.Exp/Core.exp.pdf',width = 5,height = 4)
+```
+
+
+
+
+
+

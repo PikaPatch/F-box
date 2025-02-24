@@ -1,0 +1,738 @@
+---
+title: "CN PhyloP"
+output: html_notebook
+---
+
+```{r}
+library(rtracklayer)
+library(stringr)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(unix)
+library(tibble)
+library(magrittr)
+library(ggformula)
+```
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Orthogroups.GeneCount.tsv',header = T) %>% 
+  tibble() -> GeneCount
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup')) %>%
+  tibble() -> gene.bed
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Pfam.txt',col.names = c('Gene','Pfam','Pfam.Desc','Start','End','IPR','STR'),sep = '\t',quote = "") %>%
+  tibble() -> Pfam.txt
+```
+
+
+
+```{r}
+gene.bed %>% 
+  filter(STR == 'JU1421') %>%
+  filter(Chr %>% str_detect("^Chr")) %>% 
+  GRanges() -> JU1421.gene.bed
+```
+
+
+```{r}
+Core.f.name <- c(
+  "Core" = "Core",
+  'CNS.Core' = 'Cni specific core',
+  'CBS.Core' = 'Cbr specific core',
+  'CN.Ex' = 'Cni specific',
+  'CB.Ex' = 'Cbr specific',
+  'Cloud' = 'Dispensable'
+)
+```
+
+
+# CN.PhyloP
+```{r}
+setwd('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/PhyloP/')
+
+CN.PhyloP.ChrI.bw <- "JU1421.PhyloP.ChrI.bw"
+CN.PhyloP.ChrII.bw <- "JU1421.PhyloP.ChrII.bw"
+CN.PhyloP.ChrIII.bw <- "JU1421.PhyloP.ChrIII.bw"
+CN.PhyloP.ChrIV.bw <- "JU1421.PhyloP.ChrIV.bw"
+CN.PhyloP.ChrV.bw <- "JU1421.PhyloP.ChrV.bw"
+CN.PhyloP.ChrX.bw <- "JU1421.PhyloP.ChrX.bw"
+
+
+CN.phyloP <- c( 
+  rtracklayer::import(CN.PhyloP.ChrI.bw) ,
+  rtracklayer::import(CN.PhyloP.ChrII.bw) ,
+  rtracklayer::import(CN.PhyloP.ChrIII.bw) ,
+  rtracklayer::import(CN.PhyloP.ChrIV.bw) ,
+  rtracklayer::import(CN.PhyloP.ChrV.bw) ,
+  rtracklayer::import(CN.PhyloP.ChrX.bw) 
+)
+
+findOverlaps(CN.phyloP,JU1421.gene.bed,select='first') -> fol
+CN.phyloP$Gene <- JU1421.gene.bed$Gene[fol]
+rm(fol)
+
+CN.phyloP %>%
+  as_tibble() -> CN.phyloP.bed
+
+CN.phyloP.bed %>%
+  group_by(Gene) %>%
+  reframe(phyloP.mean = mean(score)) -> CN.Gene.phyloP
+```
+
+
+
+# PA.data
+
+```{r}
+GeneCount %>%
+  dplyr::select(-c('N2','BRE','CRE'),-Total) %>%
+  filter(rowSums(across(where(is.numeric)) > 0) > 0) %>%
+  mutate(across(where(is.numeric), ~ if_else(.x > 0, 1, 0))) -> GeneCount.PA
+
+GeneCount.PA %>%
+  #mutate(Total = rowSums(across(where(is.numeric))) ) %>%
+  mutate(CN.Core = if_else( rowSums(across(all_of(CN))) == length(CN) , T, F)  ) %>%
+  mutate(CB.Core = if_else( rowSums(across(all_of(CB))) == length(CB) , T, F)  ) %>%
+  mutate(CN.Ex = if_else( rowSums(across(all_of(CB))) == 0 , T, F)  ) %>%
+  mutate(CB.Ex = if_else( rowSums(across(all_of(CN))) == 0 , T, F)  ) -> GeneCount.PA.C
+
+GeneCount.PA.C %>%
+  mutate(Order = case_when(
+    CN.Core & CB.Core ~ "Core",
+    CN.Core & !CN.Ex ~ "CNS.Core",
+    CB.Core & !CB.Ex ~ "CBS.Core",
+    CN.Ex ~ "CN.Ex",
+    CB.Ex ~ "CB.Ex",
+    .default = "Cloud"
+  )) %>%
+  mutate(Order = Order %>% factor(levels = c('Core','CNS.Core','CBS.Core','CN.Ex','CB.Ex','Cloud'))) %>%
+  arrange(Order) -> PA.data
+```
+
+
+```{r}
+gene.bed %>%
+  filter(STR == 'JU1421') %>%
+  left_join(PA.data %>% dplyr::select(Orthogroup,Order) , by = join_by(Orthogroup == Orthogroup)) -> JU1421.gene.bed
+```
+
+
+
+# up
+```{r}
+TypeC <- c('Core','CNS.Core','CBS.Core','CN.Ex','Cloud')
+up.down.int <- 2000
+
+for (i in TypeC) {
+  
+  Group.name <- i
+  
+  Pbed <- JU1421.gene.bed %>%
+  filter(Order == Group.name) %>%
+  filter(Chr %>% str_detect("^Chr")) %>% 
+  GRanges()
+  
+  Pbed.up <- Pbed %>% promoters(upstream=up.down.int,downstream=up.down.int)
+  
+  mergeByOverlaps(CN.phyloP,Pbed.up,type = 'any') -> Pbed.up.PhyloP
+  
+  PD <- tibble(
+    Chr = Pbed.up.PhyloP$CN.phyloP@seqnames %>% as.vector(),
+    Posi = Pbed.up.PhyloP$CN.phyloP %>% start,
+    Score = Pbed.up.PhyloP$score,
+    Gene = Pbed.up.PhyloP$Pbed.up$Gene,
+    Gene.Start = Pbed.up.PhyloP$Pbed.up %>% start,
+    Gene.End = Pbed.up.PhyloP$Pbed.up %>% end,
+    Strand = Pbed.up.PhyloP$Pbed.up %>% strand %>% as.vector()
+  ) %>% 
+    mutate(nPosi = if_else(Strand == '+', Posi - Gene.Start ,Gene.End - Posi  ) ) 
+  
+  PD %<>%
+    group_by(nPosi) %>%
+    reframe(mScore = mean(Score)) %>%
+    mutate(Group=Group.name)
+  
+  assign( paste0('CN.TSS.',Group.name),PD)
+  
+  sp.lamda <- 0.0000001
+  plot(PD$nPosi,PD$mScore,pch='.',main = Group.name)
+  smooth.spline(PD$nPosi,PD$mScore,lambda = sp.lamda) %>% lines(col='red')
+
+}
+```
+
+
+
+```{r}
+bin_rf <- function(tib,bin.size,up.down.int){
+  tib %>%
+    mutate(nPosi = nPosi - up.down.int) %>%
+    mutate(bin = nPosi %/% bin.size) %>% 
+    group_by(bin,Group) %>% 
+    reframe(mScore = mean(mScore)) %>%
+    return()
+}
+```
+
+
+
+```{r}
+bin.size <- 10
+p.data <- tibble()
+p.data %<>%
+  bind_rows( CN.TSS.Core %>% bin_rf(bin.size,up.down.int), 
+             CN.TSS.CNS.Core %>% bin_rf(bin.size,up.down.int), 
+             CN.TSS.CBS.Core %>% bin_rf(bin.size,up.down.int), 
+             CN.TSS.CN.Ex %>% bin_rf(bin.size,up.down.int), 
+             CN.TSS.Cloud %>% bin_rf(bin.size,up.down.int), 
+             ) 
+```
+
+#Fig 3 E F
+```{r}
+c <- c("#ff595e", "#6a4c93", "#ffca3a","#8ac926","lightgrey","#1982c4")
+
+p.data %>% 
+  mutate(Group = unname(Core.f.name)[match(Group,Core.f.name %>% names)] ) %>%
+  mutate(Group = Group %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot(aes(x = bin/(1000/bin.size), y= mScore,group=Group)) +
+  geom_point(aes(color=Group),size = .005,alpha = 0.2) +
+  geom_spline(aes(color=Group),
+              linewidth = .3
+              ) +
+  #scale_x_continuous(breaks = c(-1.5,-1,-0.5,0,0.5,1,1.5)) +
+  scale_x_continuous(n.breaks = 7) +
+  scale_color_manual(values = c) +
+  ylim(c(-0.01,0.20)) +
+  geom_vline(xintercept=0, linetype="dashed", 
+                color = "black", linewidth=.3) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+  ) +
+  xlab('Distance to TSS(kb)') +
+  ylab('PhyloP') +
+  guides(color=guide_legend(title="Gene fimilies group"))
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/CN.PhyloP.TSS.pdf',width = 4,height = 1.6)
+```
+
+
+# TES
+
+```{r}
+TypeC <- c('Core','CNS.Core','CBS.Core','CN.Ex','Cloud')
+up.down.int <- 2000
+
+for (i in TypeC) {
+  
+  Group.name <- i
+  
+  Pbed <- JU1421.gene.bed %>%
+  filter(Order == Group.name) %>%
+  filter(Chr %>% str_detect("^Chr")) %>% 
+  GRanges()
+  
+  Pbed %>%
+  as_tibble() %>%
+  mutate(strand = if_else(strand == '-', '+', '-')) %>%
+  GRanges %>%
+  promoters(upstream=up.down.int,downstream=up.down.int) -> Pbed.up
+  
+  mergeByOverlaps(CN.phyloP,Pbed.up,type = 'any') -> Pbed.up.PhyloP
+  
+  PD <- tibble(
+    Chr = Pbed.up.PhyloP$CN.phyloP@seqnames %>% as.vector(),
+    Posi = Pbed.up.PhyloP$CN.phyloP %>% start,
+    Score = Pbed.up.PhyloP$score,
+    Gene = Pbed.up.PhyloP$Pbed.up$Gene,
+    Gene.Start = Pbed.up.PhyloP$Pbed.up %>% start,
+    Gene.End = Pbed.up.PhyloP$Pbed.up %>% end,
+    Strand = Pbed.up.PhyloP$Pbed.up %>% strand %>% as.vector()
+  ) %>% 
+    mutate(nPosi = if_else(Strand == '+', Posi - Gene.Start ,Gene.End - Posi  ) )  %>%
+    mutate(nPosi = - nPosi + up.down.int + up.down.int)
+  
+  PD %<>%
+    group_by(nPosi) %>%
+    reframe(mScore = mean(Score)) %>%
+    mutate(Group=Group.name)
+  
+  assign( paste0('CN.TES.',Group.name),PD)
+  
+  sp.lamda <- 0.0000001
+  plot(PD$nPosi,PD$mScore,pch='.',main = Group.name)
+  smooth.spline(PD$nPosi,PD$mScore,lambda = sp.lamda) %>% lines(col='red')
+
+}
+```
+
+
+```{r}
+bin.size <- 10
+p.data <- tibble()
+p.data %<>%
+  bind_rows( CN.TES.Core %>% bin_rf(bin.size,up.down.int), 
+             CN.TES.CNS.Core %>% bin_rf(bin.size,up.down.int), 
+             CN.TES.CBS.Core %>% bin_rf(bin.size,up.down.int), 
+             CN.TES.CN.Ex %>% bin_rf(bin.size,up.down.int), 
+             CN.TES.Cloud %>% bin_rf(bin.size,up.down.int), 
+             ) 
+```
+
+#Fig 3 E F
+```{r}
+c <- c("#ff595e", "#6a4c93", "#ffca3a","#8ac926","lightgrey","#1982c4")
+
+p.data %>% 
+  mutate(Group = unname(Core.f.name)[match(Group,Core.f.name %>% names)] ) %>%
+  mutate(Group = Group %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot(aes(x = bin/(1000/bin.size), y= mScore,group=Group)) +
+  geom_point(aes(color=Group),size = .005,alpha = 0.2) +
+  geom_spline(aes(color=Group),
+              linewidth = .3
+              ) +
+  #scale_x_continuous(breaks = c(-1.5,-1,-0.5,0,0.5,1,1.5)) +
+  scale_x_continuous(n.breaks = 7) +
+  scale_color_manual(values = c) +
+  ylim(c(-0.01,0.20)) +
+  geom_vline(xintercept=0, linetype="dashed", 
+                color = "black", linewidth=.3) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+  ) +
+  xlab('Distance to TES(kb)') +
+  ylab('PhyloP') +
+  guides(color=guide_legend(title="Gene fimilies group"))
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/CN.PhyloP.TES.pdf',width = 4,height = 1.6)
+```
+
+
+
+# FBOX
+
+
+```{r}
+
+Pfam.txt %>%
+  filter(STR == 'JU1421') %>%
+  filter(Pfam == 'PF00646') %>%
+  pull(Gene) %>% unique() -> JU1421.FBOX.Gene
+gene.bed %>%
+  filter(STR == 'JU1421') %>%
+  filter(Chr %>% str_detect("^Chr")) %>%
+  filter( Gene %in% JU1421.FBOX.Gene ) %>%
+  GRanges() -> JU1421.FBOX.gene.bed
+
+
+Pfam.txt %>%
+  filter(STR == 'JU1421') %>%
+  filter(Pfam == 'PF00651') %>%
+  pull(Gene) %>% unique() -> JU1421.BTB.Gene
+gene.bed %>%
+  filter(STR == 'JU1421') %>%
+  filter(Chr %>% str_detect("^Chr")) %>%
+  filter( Gene %in% JU1421.BTB.Gene ) %>%
+  GRanges() -> JU1421.BTB.gene.bed
+
+Pfam.txt %>%
+  filter(STR == 'JU1421') %>%
+  filter(Pfam == 'PF00917') %>%
+  pull(Gene) %>% unique() -> JU1421.MATH.Gene
+gene.bed %>%
+  filter(STR == 'JU1421') %>%
+  filter(Chr %>% str_detect("^Chr")) %>%
+  filter( Gene %in% JU1421.MATH.Gene ) %>%
+  GRanges() -> JU1421.MATH.gene.bed
+
+
+Pfam.txt %>%
+  filter(STR == 'JU1421') %>%
+  filter(!Pfam %in% c('PF00646','PF00651','PF00917')) %>%
+  pull(Gene) %>% unique() -> JU1421.Others.Gene
+gene.bed %>%
+  filter(STR == 'JU1421') %>%
+  filter(Chr %>% str_detect("^Chr")) %>%
+  filter( Gene %in% JU1421.Others.Gene ) %>%
+  GRanges() -> JU1421.Others.gene.bed
+  
+```
+
+
+```{r}
+Domain.f.name <- c(
+  "FBOX" = "PF00646",
+  'BTB' = 'PF00651',
+  'MATH' = 'PF00917',
+  'Others' = 'aaa'
+)
+# Domain.name <- Domain.f.name[Group.name] %>% as.vector()
+```
+
+# FBOX TSS
+
+```{r}
+TypeC <- c('FBOX','BTB','MATH','Others')
+up.down.int <- 2000
+
+for (i in TypeC) {
+  
+  Group.name <- i
+  
+  Pbed <- get( paste0('JU1421.',Group.name,'.gene.bed') )
+  Pbed.up <- Pbed %>% promoters(upstream=up.down.int,downstream=up.down.int)
+  
+  mergeByOverlaps(CN.phyloP,Pbed.up,type = 'any') -> Pbed.up.PhyloP
+  
+  PD <- tibble(
+    Chr = Pbed.up.PhyloP$CN.phyloP@seqnames %>% as.vector(),
+    Posi = Pbed.up.PhyloP$CN.phyloP %>% start,
+    Score = Pbed.up.PhyloP$score,
+    Gene = Pbed.up.PhyloP$Pbed.up$Gene,
+    Gene.Start = Pbed.up.PhyloP$Pbed.up %>% start,
+    Gene.End = Pbed.up.PhyloP$Pbed.up %>% end,
+    Strand = Pbed.up.PhyloP$Pbed.up %>% strand %>% as.vector()
+  ) %>% 
+    mutate(nPosi = if_else(Strand == '+', Posi - Gene.Start ,Gene.End - Posi  ) ) 
+  
+  PD %<>%
+    group_by(nPosi) %>%
+    reframe(mScore = mean(Score)) %>%
+    mutate(Group=Group.name)
+  
+  assign( paste0('CN.TSS.',Group.name),PD)
+  
+  sp.lamda <- 0.0000001
+  plot(PD$nPosi,PD$mScore,pch='.',main = Group.name)
+  smooth.spline(PD$nPosi,PD$mScore,lambda = sp.lamda) %>% lines(col='red')
+
+}
+```
+
+```{r}
+bin.size <- 10
+p.data <- tibble()
+p.data %<>%
+  bind_rows( CN.TSS.FBOX %>% bin_rf(bin.size,up.down.int), 
+             CN.TSS.BTB %>% bin_rf(bin.size,up.down.int), 
+             CN.TSS.MATH %>% bin_rf(bin.size,up.down.int), 
+             CN.TSS.Others %>% bin_rf(bin.size,up.down.int)
+             ) 
+```
+
+
+```{r}
+c <- c("#1982c4", "#ff595e", "#ffca3a","grey50","lightgrey","#1982c4")
+
+p.data %>% 
+  #mutate(Group = unname(Core.f.name)[match(Group,Core.f.name %>% names)] ) %>%
+  #mutate(Group = Group %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot(aes(x = bin/(1000/bin.size), y= mScore,group=Group)) +
+  geom_point(aes(color=Group),size = .005,alpha = 0.2) +
+  geom_spline(aes(color=Group),
+              linewidth = .3
+              ) +
+  #scale_x_continuous(breaks = c(-1.5,-1,-0.5,0,0.5,1,1.5)) +
+  scale_x_continuous(n.breaks = 7) +
+  scale_color_manual(values = c) +
+  #ylim(c(-0.01,0.20)) +
+  geom_vline(xintercept=0, linetype="dashed", 
+                color = "black", linewidth=.3) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+  ) +
+  xlab('Distance to TSS(kb)') +
+  ylab('PhyloP') +
+  guides(color=guide_legend(title="Gene fimilies group"))
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/12.FBOX.PhyloP/CN.FBOX.TSS.pdf',width = 4,height = 1.6)
+```
+
+
+
+
+
+
+# FBOX TES
+
+```{r}
+TypeC <- c('FBOX','BTB','MATH','Others')
+up.down.int <- 2000
+
+for (i in TypeC) {
+  
+  Group.name <- i
+  
+  Pbed <- get( paste0('JU1421.',Group.name,'.gene.bed') )
+
+  Pbed %>%
+  as_tibble() %>%
+  mutate(strand = if_else(strand == '-', '+', '-')) %>%
+  GRanges %>%
+  promoters(upstream=up.down.int,downstream=up.down.int) -> Pbed.up
+  
+  mergeByOverlaps(CN.phyloP,Pbed.up,type = 'any') -> Pbed.up.PhyloP
+  
+  PD <- tibble(
+    Chr = Pbed.up.PhyloP$CN.phyloP@seqnames %>% as.vector(),
+    Posi = Pbed.up.PhyloP$CN.phyloP %>% start,
+    Score = Pbed.up.PhyloP$score,
+    Gene = Pbed.up.PhyloP$Pbed.up$Gene,
+    Gene.Start = Pbed.up.PhyloP$Pbed.up %>% start,
+    Gene.End = Pbed.up.PhyloP$Pbed.up %>% end,
+    Strand = Pbed.up.PhyloP$Pbed.up %>% strand %>% as.vector()
+  ) %>% 
+    mutate(nPosi = if_else(Strand == '+', Posi - Gene.Start ,Gene.End - Posi  ) ) %>%
+    mutate(nPosi = - nPosi + up.down.int + up.down.int)
+  
+  PD %<>%
+    group_by(nPosi) %>%
+    reframe(mScore = mean(Score)) %>%
+    mutate(Group=Group.name)
+  
+  assign( paste0('CN.TES.',Group.name),PD)
+  
+  sp.lamda <- 0.0000001
+  plot(PD$nPosi,PD$mScore,pch='.',main = Group.name)
+  smooth.spline(PD$nPosi,PD$mScore,lambda = sp.lamda) %>% lines(col='red')
+
+}
+```
+
+```{r}
+bin.size <- 10
+p.data <- tibble()
+p.data %<>%
+  bind_rows( CN.TES.FBOX %>% bin_rf(bin.size,up.down.int), 
+             CN.TES.BTB %>% bin_rf(bin.size,up.down.int), 
+             CN.TES.MATH %>% bin_rf(bin.size,up.down.int), 
+             CN.TES.Others %>% bin_rf(bin.size,up.down.int)
+             ) 
+```
+
+
+```{r}
+c <- c("#1982c4", "#ff595e", "#ffca3a","grey50","lightgrey","#1982c4")
+
+p.data %>% 
+  #mutate(Group = unname(Core.f.name)[match(Group,Core.f.name %>% names)] ) %>%
+  #mutate(Group = Group %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot(aes(x = bin/(1000/bin.size), y= mScore,group=Group)) +
+  geom_point(aes(color=Group),size = .005,alpha = 0.2) +
+  geom_spline(aes(color=Group),
+              linewidth = .3
+              ) +
+  #scale_x_continuous(breaks = c(-1.5,-1,-0.5,0,0.5,1,1.5)) +
+  scale_x_continuous(n.breaks = 7) +
+  scale_color_manual(values = c) +
+  #ylim(c(-0.01,0.20)) +
+  geom_vline(xintercept=0, linetype="dashed", 
+                color = "black", linewidth=.3) +
+  theme_classic() +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+  ) +
+  xlab('Distance to TES(kb)') +
+  ylab('PhyloP') +
+  guides(color=guide_legend(title="Gene fimilies group"))
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/12.FBOX.PhyloP/CN.FBOX.TES.pdf',width = 4,height = 1.6)
+```
+
+
+
+
+
+
+
+# boxplot
+
+```{r}
+Pbed <- JU1421.gene.bed %>%
+  filter(Chr %>% str_detect("^Chr")) %>% 
+  GRanges()
+
+mergeByOverlaps(CN.phyloP,Pbed,type = 'any') -> Pbed.PhyloP
+
+PD <- tibble(
+    Chr = Pbed.PhyloP$CN.phyloP@seqnames %>% as.vector(),
+    Posi = Pbed.PhyloP$CN.phyloP %>% start,
+    Score = Pbed.PhyloP$score,
+    Gene = Pbed.PhyloP$Pbed$Gene,
+    Gene.Start = Pbed.PhyloP$Pbed %>% start,
+    Gene.End = Pbed.PhyloP$Pbed %>% end,
+    Strand = Pbed.PhyloP$Pbed %>% strand %>% as.vector(),
+    Order = Pbed.PhyloP$Order
+  )
+
+PD %>%
+  filter(! is.na(Order)) %>%
+  group_by(Chr,Gene,Gene.Start,Gene.End,Order) %>%
+  reframe(mScore = mean(Score)) -> p.data
+  
+```
+
+# supplementary figure
+```{r}
+c <- c("#ff595e", "#6a4c93", "#ffca3a","#8ac926","lightgrey","#1982c4")
+p.data %>%
+  mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot() +
+  geom_boxplot(aes(Order,mScore,fill=Order),outliers = F,linewidth = 1) +
+  scale_fill_manual(values = c) +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    panel.background = element_rect(fill = "#fcead9") , 
+    axis.line.y=element_line(linewidth = .5, colour = "black"),
+    strip.background =element_rect(fill="#F6B06D"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1)) +
+  xlab('') + ylab('') 
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure3/CN.PhyloP.Gene.pdf',width = 4,height = 3)
+```
+
+
+
+
+
+
+# FBOX boxplot
+
+```{r}
+TypeC <- c('FBOX','BTB','MATH','Others')
+up.down.int <- 2000
+
+for (i in TypeC) {
+  
+  Group.name <- i
+  
+  Pbed <- get( paste0('JU1421.',Group.name,'.gene.bed') )
+
+  Pbed -> Pbed.up
+  
+  mergeByOverlaps(CN.phyloP,Pbed.up,type = 'any') -> Pbed.up.PhyloP
+  
+  PD <- tibble(
+    Chr = Pbed.up.PhyloP$CN.phyloP@seqnames %>% as.vector(),
+    Posi = Pbed.up.PhyloP$CN.phyloP %>% start,
+    Score = Pbed.up.PhyloP$score,
+    Gene = Pbed.up.PhyloP$Pbed.up$Gene,
+    Gene.Start = Pbed.up.PhyloP$Pbed.up %>% start,
+    Gene.End = Pbed.up.PhyloP$Pbed.up %>% end,
+    Strand = Pbed.up.PhyloP$Pbed.up %>% strand %>% as.vector()
+  ) 
+  
+  PD %<>%
+    group_by(Chr,Gene,Gene.Start,Gene.End) %>%
+    reframe(mScore = mean(Score)) %>%
+    mutate(Group=Group.name)
+
+  assign( paste0('CN.mScore.',Group.name),PD)
+
+}
+```
+
+
+```{r}
+p.data <- tibble()
+p.data %<>%
+  bind_rows( CN.mScore.FBOX ,
+             CN.mScore.BTB ,
+             CN.mScore.MATH ,
+             CN.mScore.Others ,
+             ) 
+```
+
+
+
+```{r}
+Pbed <- JU1421.gene.bed %>%
+  filter(Chr %>% str_detect("^Chr")) %>% 
+  GRanges()
+
+mergeByOverlaps(CN.phyloP,Pbed,type = 'any') -> Pbed.PhyloP
+
+PD <- tibble(
+    Chr = Pbed.PhyloP$CN.phyloP@seqnames %>% as.vector(),
+    Posi = Pbed.PhyloP$CN.phyloP %>% start,
+    Score = Pbed.PhyloP$score,
+    Gene = Pbed.PhyloP$Pbed$Gene,
+    Gene.Start = Pbed.PhyloP$Pbed %>% start,
+    Gene.End = Pbed.PhyloP$Pbed %>% end,
+    Strand = Pbed.PhyloP$Pbed %>% strand %>% as.vector(),
+    Order = Pbed.PhyloP$Order
+  )
+
+PD %>%
+  filter(! is.na(Order)) %>%
+  group_by(Chr,Gene,Gene.Start,Gene.End,Order) %>%
+  reframe(mScore = mean(Score)) -> p.data
+  
+```
+
+
+# supplementary figure
+```{r}
+c <- c("#1982c4", "#ff595e", "#ffca3a","grey50","lightgrey","#1982c4")
+p.data %>%
+  #mutate(Order = unname(Core.f.name)[match(Order,Core.f.name %>% names)] ) %>%
+  #mutate(Order = Order %>% factor( levels = unname(Core.f.name) )) %>%
+  ggplot() +
+  geom_boxplot(aes(Group,mScore,fill=Group),outliers = F,linewidth = 1) +
+  scale_fill_manual(values = c) +
+  theme(
+    panel.border = element_rect(colour = "black", fill=NA, linewidth=1),
+    panel.background = element_rect(fill = "#fcead9") , 
+    axis.line.y=element_line(linewidth = .5, colour = "black"),
+    strip.background =element_rect(fill="#F6B06D"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5,hjust = 1)) +
+  xlab('') + ylab('') 
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Supplementary/12.FBOX.PhyloP/CN.FBOX.Boxplot.pdf',width = 4,height = 3)
+```
+
+
+

@@ -1,0 +1,403 @@
+---
+title: "Fig6"
+output: html_notebook
+---
+
+```{r}
+library(reshape2)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+```
+
+
+```{r}
+strain.table <- read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/strain.txt',header = T) %>% tibble()
+
+CB <- strain.table %>% filter(SPE=='CBR') %>% pull(STR)
+CN <- strain.table %>% filter(SPE=='CNI') %>% pull(STR)
+
+strain.table %>%
+  mutate(STR = STR %>% factor(levels = c(CB,CN))) -> strain.table
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup')) %>%
+  tibble() -> gene.bed
+```
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/gene.plus.plus.bed',col.names = c('Chr','Start','End','Gene','score','strand','STR','Orthogroup','NOTAL.cov')) %>%
+  tibble() -> gene.plus.plus.bed
+```
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/F-BOX.Figure/data/Orthogroups.GeneCount.tsv',header = T) %>% 
+  tibble() -> GeneCount
+```
+
+GeneCount %>%
+dplyr::select(Orthogroup,AF16,JU1421) %>%
+filter(if_all(where(is.numeric), ~ . == 1)) %>% pull(Orthogroup) -> AFJU.121
+gene.plus.plus.bed %>% filter(Orthogroup %in% AFJU.121) %>% filter(STR %in% c('AF16','JU1421')) %>% group_by(STR,Chr) %>% reframe(n=n())
+
+# CN 121
+```{r}
+
+GeneCount %>%
+  dplyr::select(-all_of(c(c('N2','BRE','CRE'),CB,'Total'))) %>%
+  filter(if_all(where(is.numeric), ~ . == 1)) %>%
+  pull(Orthogroup) -> CN.121
+
+```
+
+
+```{r}
+gene.bed %>%
+  filter(STR %in% CN) %>%
+  filter(Orthogroup %in% CN.121) -> CN.121.bed
+
+CN.121.bed %>%
+  dcast(Orthogroup ~ STR, value.var = 'Gene') %>%
+  tibble() -> CN.121.pair
+
+CN.121.bed %>%
+  write.table(file = '/Users/patch/Documents/HBKU/Research/F-BOX/fig6/CN.121.bed',
+              row.names = F,col.names = F,
+              sep = '\t',
+              quote = F)
+```
+
+
+```{r}
+crossing(STR1 = CN, STR2 = CN) %>%
+  filter(STR1 <= STR2) -> combination.txt
+
+combination.txt %>%
+  write.table(file = '/Users/patch/Documents/HBKU/Research/F-BOX/fig6/combination.txt',
+              row.names = F,col.names = F,
+              sep = '\t',
+              quote = F)
+```
+
+```{r}
+crossing(
+  qGene = CN.121.bed %>% filter(STR=='EG5268')%>%pull(Gene),
+  sGene = CN.121.bed %>% filter(STR=='JU1421')%>%pull(Gene)) %>%
+  filter(qGene != sGene) 
+```
+
+
+```{r}
+meanPercent <- function(qSTR,sSTR){
+  
+  blast.file <- str_glue('/Users/patch/Documents/HBKU/Research/F-BOX/fig6/com_blast/{qSTR}_{sSTR}.txt')
+  blast.col <- c("qGene","sGene","Percent","Len","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore")
+  
+  if(qSTR == sSTR){
+    return(100)
+  }
+  
+  read.table(blast.file,
+           col.names = blast.col) %>%
+  as_tibble() -> blast.txt
+  
+  blast.txt %>%
+  group_by(qGene,sGene) %>%
+  filter(Len == max(Len)) %>%
+  filter(Percent == max(Percent)) %>%
+  filter(row_number() == 1) %>%
+  left_join( 
+    CN.121.pair %>% dplyr::select(all_of(c('Orthogroup',qSTR,sSTR))) ,
+    by = c('qGene' = qSTR , 'sGene' = sSTR)) %>%
+  filter(!is.na(Orthogroup)) %>% pull(Percent) %>% mean -> meanP
+  
+  return(meanP)
+}
+```
+
+
+```{r}
+meanPercent('JU1421','JU2484') %>% class()
+```
+
+
+
+```{r}
+combination.txt %>%
+  rowwise() %>%
+  mutate(meanP = meanPercent(STR1,STR2) ) %>%
+  ungroup() -> meanP.combination
+```
+
+```{r}
+meanP.combination %>% 
+  dcast(STR1 ~ STR2)
+```
+
+```{r}
+meanP.combination[2,1] <- 'JU1421'
+meanP.combination[2,2] <- 'EG5268'
+```
+
+
+
+```{r}
+
+meanP.combination %>%
+  ggplot(aes(STR1 %>% factor(levels = CN),STR2 %>% factor(levels = CN))) +
+  geom_raster(aes(fill = meanP)) +
+  geom_text(aes(label = round(meanP,digits = 2)), color = "white",size=3) +
+  scale_fill_gradientn(colors = c("white", "red"), limits = c(94, 100)) +
+  scale_x_discrete(position = 'top') +
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  xlab('') + ylab('')
+  
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure6/meanAll.pdf',width = 5,height = 5)
+```
+
+
+
+```{r}
+Gene.Percent <- function(qSTR,sSTR,Gene.vec){
+  
+  blast.file <- str_glue('/Users/patch/Documents/HBKU/Research/F-BOX/fig6/com_blast/{qSTR}_{sSTR}.txt')
+  blast.col <- c("qGene","sGene","Percent","Len","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore")
+  
+  if(qSTR == sSTR){
+    return(100)
+  }
+  
+  
+  read.table(blast.file,
+           col.names = blast.col) %>%
+  as_tibble() -> blast.txt
+  
+  blast.txt %>%
+  filter(qGene %in% Gene.vec) %>%
+  filter(sGene %in% Gene.vec) %>%
+  pull(Percent) -> P
+  
+  return(P)
+}
+```
+
+
+
+```{r}
+otub3 <- c("CNI15792","JU1422_15109","EG5268_15517","JU2484_15324","JU2617_14983","JU4356_14898","VSL2202_15081","YR106_15450","ZF1220_15596")
+
+combination.txt %>%
+  rowwise() %>%
+  mutate(GP = Gene.Percent(STR1,STR2,otub3) ) %>%
+  ungroup() -> GP.combination
+```
+
+```{r}
+GP.combination[2,1] <- 'JU1421'
+GP.combination[2,2] <- 'EG5268'
+```
+
+
+
+
+```{r}
+GP.combination %>%
+  ggplot(aes(STR1 %>% factor(levels = CN),STR2 %>% factor(levels = CN))) +
+  geom_raster(aes(fill = GP)) +
+  geom_text(aes(label = round(GP,digits = 2)), color = "white",size=3) +
+  scale_fill_gradientn(colors = c("white", "red"), limits = c(94, 100)) +
+  scale_x_discrete(position = 'top') +
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  xlab('') + ylab('')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure6/otub3.pdf',width = 5,height = 5)
+```
+
+
+```{r}
+gene.plus.plus.bed %>%
+  filter(STR %in% CN) %>%
+  filter(Orthogroup %in% CN.121) %>%
+  mutate(DivG = if_else(NOTAL.cov < 1, F, T)) -> CN.121.div.bed
+
+CN.121.div.bed %>%
+  dcast(Orthogroup ~ STR, value.var = 'DivG') %>%
+  filter(if_all(where(is.logical), ~ . == F)) %>% 
+  pull(Orthogroup) -> CN.121.Syn
+
+setdiff(CN.121, CN.121.Syn) -> CN.121.Div
+
+CN.121.div.bed %>%
+  filter(Orthogroup %in% CN.121.Syn) %>%
+  dcast(Orthogroup ~ STR, value.var = 'Gene') %>%
+  tibble() -> CN.121.Syn.pair
+
+CN.121.div.bed %>%
+  filter(Orthogroup %in% CN.121.Div) %>%
+  dcast(Orthogroup ~ STR, value.var = 'Gene') %>%
+  tibble() -> CN.121.Div.pair
+```
+
+
+
+
+```{r}
+meanPercentSyn <- function(qSTR,sSTR){
+  
+  blast.file <- str_glue('/Users/patch/Documents/HBKU/Research/F-BOX/fig6/com_blast/{qSTR}_{sSTR}.txt')
+  blast.col <- c("qGene","sGene","Percent","Len","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore")
+  
+  if(qSTR == sSTR){
+    return(100)
+  }
+  
+  read.table(blast.file,
+           col.names = blast.col) %>%
+  as_tibble() -> blast.txt
+  
+  blast.txt %>%
+  group_by(qGene,sGene) %>%
+  filter(Len == max(Len)) %>%
+  filter(Percent == max(Percent)) %>%
+  filter(row_number() == 1) %>%
+  left_join( 
+    CN.121.Syn.pair %>% dplyr::select(all_of(c('Orthogroup',qSTR,sSTR))) ,
+    by = c('qGene' = qSTR , 'sGene' = sSTR)) %>%
+  filter(!is.na(Orthogroup)) %>% pull(Percent) %>% mean -> meanP
+  
+  return(meanP)
+}
+```
+
+
+```{r}
+combination.txt %>%
+  rowwise() %>%
+  mutate(meanP = meanPercentSyn(STR1,STR2) ) %>%
+  ungroup() -> meanP.Syn.combination
+```
+
+```{r}
+meanP.Syn.combination[2,1] <- 'JU1421'
+meanP.Syn.combination[2,2] <- 'EG5268'
+```
+
+
+# Fig 6 E
+```{r}
+meanP.Syn.combination %>%
+  ggplot(aes(STR1 %>% factor(levels = CN),STR2 %>% factor(levels = CN))) +
+  geom_raster(aes(fill = meanP)) +
+  geom_text(aes(label = round(meanP,digits = 2)), color = "white",size=3) +
+  scale_fill_gradientn(colors = c("white", "red"), limits = c(94, 100)) +
+  scale_x_discrete(position = 'top') +
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  xlab('') + ylab('')
+```
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure6/SynOrtho.pdf',width = 5,height = 5)
+```
+
+
+
+```{r}
+meanPercentDiv <- function(qSTR,sSTR){
+  
+  blast.file <- str_glue('/Users/patch/Documents/HBKU/Research/F-BOX/fig6/com_blast/{qSTR}_{sSTR}.txt')
+  blast.col <- c("qGene","sGene","Percent","Len","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore")
+  
+  if(qSTR == sSTR){
+    return(100)
+  }
+  
+  read.table(blast.file,
+           col.names = blast.col) %>%
+  as_tibble() -> blast.txt
+  
+  blast.txt %>%
+  group_by(qGene,sGene) %>%
+  filter(Len == max(Len)) %>%
+  filter(Percent == max(Percent)) %>%
+  filter(row_number() == 1) %>%
+  left_join( 
+    CN.121.Div.pair %>% dplyr::select(all_of(c('Orthogroup',qSTR,sSTR))) ,
+    by = c('qGene' = qSTR , 'sGene' = sSTR)) %>%
+  filter(!is.na(Orthogroup)) %>% pull(Percent) %>% mean -> meanP
+  
+  return(meanP)
+}
+```
+
+
+```{r}
+combination.txt %>%
+  rowwise() %>%
+  mutate(meanP = meanPercentDiv(STR1,STR2) ) %>%
+  ungroup() -> meanP.Div.combination
+```
+
+```{r}
+meanP.Div.combination[2,1] <- 'JU1421'
+meanP.Div.combination[2,2] <- 'EG5268'
+```
+
+
+
+```{r}
+meanP.Div.combination %>%
+  ggplot(aes(STR1 %>% factor(levels = CN),STR2 %>% factor(levels = CN))) +
+  geom_raster(aes(fill = meanP)) +
+  geom_text(aes(label = round(meanP,digits = 2)), color = "white",size=3) +
+  scale_fill_gradientn(colors = c("white", "red"), limits = c(94, 100)) +
+  scale_x_discrete(position = 'top') +
+  theme_minimal() +
+  theme(panel.grid = element_blank()) +
+  xlab('') + ylab('')
+```
+
+
+```{r}
+ggsave('/Users/patch/Documents/HBKU/Research/F-BOX/SVG/Figure6/DivOrtho.pdf',width = 5,height = 5)
+```
+
+
+
+
+
+```{r}
+read.table('/Users/patch/Documents/HBKU/Research/F-BOX/fig6/com_blast/EG5268_JU1421.txt',
+           col.names = c("qGene","sGene","Percent","Len","mismatch","gapopen","qstart","qend","sstart","send","evalue","bitscore")) %>%
+  as_tibble() -> EG5268_JU1421.txt
+```
+
+
+
+
+```{r}
+EG5268_JU1421.txt %>%
+  group_by(qGene,sGene) %>%
+  filter(Len == max(Len)) %>%
+  filter(Percent == max(Percent)) %>%
+  filter(row_number() == 1) -> EG5268_JU1421.txt.t
+  #tally() %>% pull(n) %>% max
+
+EG5268_JU1421.txt.t %>%
+  left_join(CN.121.pair %>% dplyr::select(Orthogroup,EG5268,JU1421), by = c('qGene' = 'EG5268' , 'sGene' = 'JU1421')) %>%
+  filter(!is.na(Orthogroup)) %>% pull(Percent) %>% mean
+```
+
+
+
