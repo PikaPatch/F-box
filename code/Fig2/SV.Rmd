@@ -203,7 +203,7 @@ AF16.NOTAL.100k.bed %>%
   geom_raster(aes(id / 10,STR %>% factor(levels = STR.order %>% rev),fill = Cov)) +
   scale_fill_viridis_c(option = 'plasma')+
   scale_x_continuous(breaks = c(0,5,10,15,20,25,30)) +
-  facet_grid(~ Chr) +Fi
+  facet_grid(~ Chr) +
   theme_bw() +
   theme(
     panel.grid = element_blank(),
@@ -222,7 +222,7 @@ ggsave(file.name,width = 17,height = 4)
 ```
 
 
-# Fig 2 FFig
+# Fig 2 F
 ```{r}
 grid.newpage()
 venn.plot <- draw.pairwise.venn(
